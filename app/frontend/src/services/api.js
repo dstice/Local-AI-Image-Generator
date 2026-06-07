@@ -528,11 +528,11 @@ export async function generateImage(prompt, negativePrompt, constraints, activeM
     };
   };
 
-  // stable-diffusion.cpp server only exposes /v1/images/generations (OpenAI-compat)
-  // Steps, cfg_scale, seed, sample_method are passed in the body and read by the server
+  // txt2img uses /v1/images/generations; img2img uses /sdapi/v1/img2img.
   const isImg2Img = !!payload.image;
+  let endpoint = `${baseUrl}/v1/images/generations`;
 
-  const genBody = {
+  let genBody = {
     prompt:           payload.prompt,
     negative_prompt:  payload.negative_prompt || "",
     n:                1,
@@ -547,13 +547,30 @@ export async function generateImage(prompt, negativePrompt, constraints, activeM
 
   // img2img extra fields
   if (isImg2Img) {
-    genBody.init_images        = [payload.image];
-    genBody.denoising_strength = payload.denoising_strength || 0.7;
+    const initBase64 = String(payload.image).replace(/^data:[^;]+;base64,/, "");
+    endpoint = `${baseUrl}/sdapi/v1/img2img`;
+    genBody = {
+      init_images:        [initBase64],
+      prompt:             payload.prompt,
+      negative_prompt:    payload.negative_prompt || "",
+      denoising_strength: payload.denoising_strength || 0.7,
+      steps:              payload.steps,
+      cfg_scale:          payload.cfg_scale,
+      seed:               payload.seed,
+      width:              payload.width,
+      height:             payload.height,
+      sampler_name:       payload.sampler || "euler_a",
+      sample_method:      payload.sampler || "euler_a",
+      batch_size:         1,
+      n_iter:             1,
+      send_images:        true,
+      save_images:        false,
+    };
   }
 
   // Attempt real HTTP call
   try {
-    const response = await fetch(`${baseUrl}/v1/images/generations`, {
+    const response = await fetch(endpoint, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       signal:  signal,

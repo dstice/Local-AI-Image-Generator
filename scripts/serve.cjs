@@ -912,6 +912,32 @@ function resetGenerationState() {
   };
 }
 
+function describeDownloadHttpError(statusCode, url, headers = {}) {
+  const host = (() => {
+    try { return new URL(url).hostname; } catch (_) { return ""; }
+  })();
+  const isHuggingFace = host.includes("huggingface.co") || host.includes("hf.co");
+  const hfErrorCode = headers["x-error-code"];
+  const hfErrorMessage = headers["x-error-message"];
+
+  if (isHuggingFace && hfErrorCode === "GatedRepo") {
+    return `HTTP ${statusCode}: Hugging Face says this model is gated. Open the model page in your browser, accept access/login, then use a Hugging Face token or download the file manually.`;
+  }
+  if (isHuggingFace && hfErrorMessage) {
+    return `HTTP ${statusCode}: Hugging Face rejected the download request: ${hfErrorMessage}`;
+  }
+
+  if (statusCode === 401 || statusCode === 403) {
+    return isHuggingFace
+      ? `HTTP ${statusCode}: Hugging Face rejected the download request. If this model is public, retry after restarting the app; otherwise open the model page in your browser and accept any license/login requirement.`
+      : `HTTP ${statusCode}: This download URL requires authorization or permission. Use a public direct download URL.`;
+  }
+  if (statusCode === 404) {
+    return `HTTP 404: Model file not found. Check that the URL points directly to a .safetensors, .gguf, or .ckpt file.`;
+  }
+  return `HTTP ${statusCode}`;
+}
+
 function startModelDownload(url, overrideFilename = null) {
   if (downloadState.active && !overrideFilename) {
     console.log("  [download] Already downloading a model");
@@ -951,7 +977,13 @@ function startModelDownload(url, overrideFilename = null) {
   const fileStream = fs.createWriteStream(destPath);
   
   const client = url.startsWith("https") ? https : http;
-  const request = client.get(url, (response) => {
+  const request = client.get(url, {
+    headers: {
+      "User-Agent": "Local-AI-Image-Generator/1.0 (+https://github.com/techjarves/Local-AI-Image-Generator)",
+      "Accept": "application/octet-stream, application/x-safetensors, */*",
+      "Referer": "https://huggingface.co/",
+    },
+  }, (response) => {
     activeDownload = { request, fileStream, destPath };
     // Handle redirects (HuggingFace resolve URLs redirect to Cloudfront/S3)
     if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
@@ -980,8 +1012,8 @@ function startModelDownload(url, overrideFilename = null) {
 
     if (response.statusCode !== 200) {
       downloadState.active = false;
-      downloadState.error = `HTTP ${response.statusCode}`;
-      console.error(`  [download] Failed: HTTP ${response.statusCode}`);
+      downloadState.error = describeDownloadHttpError(response.statusCode, url, response.headers);
+      console.error(`  [download] Failed: ${downloadState.error}`);
       fileStream.close();
       try { fs.unlinkSync(destPath); } catch (_) {}
       activeDownload = null;
