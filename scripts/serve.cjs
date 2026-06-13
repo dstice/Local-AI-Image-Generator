@@ -413,19 +413,25 @@ function getOpenVinoPython() {
   return null;
 }
 
+let cachedOpenVinoNpuInfo = null;
+
 function getOpenVinoNpuInfo() {
+  if (cachedOpenVinoNpuInfo) return cachedOpenVinoNpuInfo;
+
   if (osPlatform !== "win32" && osPlatform !== "linux") {
-    return { supported: false, reason: "OpenVINO NPU backend is supported on Windows and Linux Intel Core Ultra systems." };
+    cachedOpenVinoNpuInfo = { supported: false, reason: "OpenVINO NPU backend is supported on Windows and Linux Intel Core Ultra systems." };
+    return cachedOpenVinoNpuInfo;
   }
   const python = getOpenVinoPython();
   if (!python) {
     const setupScript = osPlatform === "win32"
       ? "scripts/setup-openvino-npu.ps1"
       : "bash scripts/setup-openvino-npu.sh";
-    return {
+    cachedOpenVinoNpuInfo = {
       supported: false,
       reason: `OpenVINO GenAI runtime is not installed. Run ${setupScript} first.`,
     };
+    return cachedOpenVinoNpuInfo;
   }
   try {
     const script = [
@@ -439,15 +445,19 @@ function getOpenVinoNpuInfo() {
     ].join("\n");
     const result = spawnSync(python, ["-c", script], { encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] });
     if (result.status !== 0) {
-      return { supported: false, python, reason: result.stderr.trim() || "OpenVINO NPU probe failed." };
+      cachedOpenVinoNpuInfo = { supported: false, python, reason: result.stderr.trim() || "OpenVINO NPU probe failed." };
+      return cachedOpenVinoNpuInfo;
     }
     const info = JSON.parse(result.stdout.trim());
     if (!info.devices.includes("NPU")) {
-      return { supported: false, python, reason: `OpenVINO is installed, but NPU is not available. Devices: ${info.devices.join(", ")}` };
+      cachedOpenVinoNpuInfo = { supported: false, python, reason: `OpenVINO is installed, but NPU is not available. Devices: ${info.devices.join(", ")}` };
+      return cachedOpenVinoNpuInfo;
     }
-    return { supported: true, platform: osPlatform, python, devices: info.devices, npu: info.npu };
+    cachedOpenVinoNpuInfo = { supported: true, platform: osPlatform, python, devices: info.devices, npu: info.npu };
+    return cachedOpenVinoNpuInfo;
   } catch (err) {
-    return { supported: false, python, reason: err.message || String(err) };
+    cachedOpenVinoNpuInfo = { supported: false, python, reason: err.message || String(err) };
+    return cachedOpenVinoNpuInfo;
   }
 }
 
