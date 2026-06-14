@@ -67,7 +67,6 @@ goto :launch
 
 :: ── Launch ────────────────────────────────────────────────────────────────────
 :launch
-cls
 echo.
 echo  ============================================================
 echo   LOCAL AI IMAGE GENERATOR  ^|  Launching...
@@ -81,14 +80,8 @@ for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8080 "') do taskkill
 
 :: Start frontend server + backend manager (serve.cjs manages sd-vulkan.exe)
 echo  Starting Local AI Image Generator...
-start "SD-Server" /min "%NODE%" "%SERVE%"
-
-:: Wait for server to bind
-timeout /t 2 >nul
-
-:: Open browser
-echo  Opening browser at http://localhost:%FRONTEND_PORT%
-start http://localhost:%FRONTEND_PORT%
+echo  Opening browser at http://localhost:%FRONTEND_PORT%...
+start /b cmd /c "timeout /t 2 >nul && start http://localhost:%FRONTEND_PORT%"
 
 echo.
 echo  ============================================================
@@ -96,12 +89,8 @@ echo   Running!
 echo   Web UI:     http://localhost:%FRONTEND_PORT%
 echo   GPU API:    Auto-selected by the app (starts at 8080)
 echo.
-echo   Close this window to stop all services.
+echo   Press Ctrl+C in this window to stop all services.
 echo  ============================================================
 echo.
-pause >nul
 
-:: Cleanup on exit
-echo  Shutting down...
-taskkill /fi "WINDOWTITLE eq SD-Server*" /f >nul 2>nul
-echo  Done. Goodbye!
+"%NODE%" "%SERVE%"

@@ -55,7 +55,6 @@ fi
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 print_header() {
-  clear 2>/dev/null || true
   echo ""
   echo "  ============================================================"
   echo "   LOCAL AI IMAGE GENERATOR  -  $PLATFORM_LABEL First-Time Setup"

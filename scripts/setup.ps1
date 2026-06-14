@@ -13,7 +13,6 @@ $distDir     = Join-Path $appDir   "dist"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 function Print-Header {
-    Clear-Host
     Write-Host ""
     Write-Host "  ============================================================" -ForegroundColor Cyan
     Write-Host "   LOCAL AI IMAGE GENERATOR  -  First-Time Setup" -ForegroundColor Cyan
