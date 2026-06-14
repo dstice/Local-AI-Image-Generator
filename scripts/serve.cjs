@@ -389,11 +389,13 @@ function getOpenVinoPythonCandidates() {
   const candidates = [];
   if (process.env.OPENVINO_PYTHON) candidates.push(process.env.OPENVINO_PYTHON);
   if (osPlatform === "win32") {
-    candidates.push(path.join(ROOT, "app", "tools", "openvino-venv", "Scripts", "python.exe"));
+    candidates.push(path.join(ROOT, "app", "tools", "openvino-venv-win", "Scripts", "python.exe"));
+    candidates.push(path.join(ROOT, "app", "tools", "openvino-venv", "Scripts", "python.exe")); // legacy fallback
     candidates.push("C:\\tmp\\npu-test-venv\\Scripts\\python.exe");
     candidates.push("python");
   } else {
-    candidates.push(path.join(ROOT, "app", "tools", "openvino-venv", "bin", "python"));
+    candidates.push(path.join(ROOT, "app", "tools", "openvino-venv-linux", "bin", "python"));
+    candidates.push(path.join(ROOT, "app", "tools", "openvino-venv", "bin", "python")); // legacy fallback
     candidates.push("python3");
     candidates.push("python");
   }
@@ -713,6 +715,32 @@ function hasAmdGpu() {
   return info.includes("amd") || info.includes("advanced micro devices") || info.includes("radeon");
 }
 
+// Detect whether we are running inside WSL2 (Windows Subsystem for Linux).
+// WSL2's GPU paravirtualization (GPU-PV) only exposes a D3D12/DirectX interface
+// to Linux. Vulkan hardware passthrough is only supported for NVIDIA (via CUDA).
+// Intel Arc and AMD GPUs in WSL2 fall back to llvmpipe (CPU software rendering).
+function isRunningInWSL() {
+  if (osPlatform !== "linux") return false;
+  try {
+    const procVersion = fs.readFileSync("/proc/version", "utf8").toLowerCase();
+    return procVersion.includes("microsoft") || procVersion.includes("wsl");
+  } catch (_) {
+    return false;
+  }
+}
+
+function getVulkanUnavailableReason() {
+  if (osPlatform === "linux" && isRunningInWSL()) {
+    const gpuName = getGpuInfo().name;
+    const lowerGpu = gpuName.toLowerCase();
+    if (lowerGpu.includes("intel") || lowerGpu.includes("arc")) {
+      return `Vulkan GPU is not available in WSL2 for Intel ${gpuName}. WSL2's GPU paravirtualization only exposes a DirectX interface — Intel Arc Vulkan requires running natively on Windows.`;
+    }
+    return "Vulkan GPU is not available in WSL2. WSL2's GPU paravirtualization does not support hardware Vulkan for this GPU. Run natively on Windows or Linux for GPU acceleration.";
+  }
+  return "Installed, but this binary did not register a Vulkan backend on this machine.";
+}
+
 function getBackendOptions() {
   if (cachedBackendOptions) return cachedBackendOptions;
 
@@ -749,7 +777,7 @@ function getBackendOptions() {
 
   const unavailable = [];
   if (vulkanInstalled && !vulkanAvailable) {
-    unavailable.push({ id: "vulkan", label: "Vulkan GPU", reason: "Installed, but this binary did not register a Vulkan backend on this machine." });
+    unavailable.push({ id: "vulkan", label: "Vulkan GPU", reason: getVulkanUnavailableReason() });
   }
   if (cudaInstalled && !cudaAvailable) {
     unavailable.push({ id: "cuda", label: "CUDA GPU", reason: "Installed, but CUDA backend validation failed." });

@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Split-Path -Parent $scriptDir
-$venvDir = Join-Path $rootDir "app\tools\openvino-venv"
+$venvDir = Join-Path $rootDir "app\tools\openvino-venv-win"
 $pythonExe = Join-Path $venvDir "Scripts\python.exe"
 
 Write-Host ""
