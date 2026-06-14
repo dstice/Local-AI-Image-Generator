@@ -778,6 +778,103 @@ function getVulkanUnavailableReason() {
   return "Installed, but this binary did not register a Vulkan backend on this machine.";
 }
 
+let cachedCoreMLPythonPath = null;
+let cachedCoreMLAvailable = null;
+
+function getCoreMLPythonPath() {
+  if (cachedCoreMLAvailable !== null) {
+    return cachedCoreMLPythonPath;
+  }
+
+  if (osPlatform !== "darwin") {
+    cachedCoreMLAvailable = false;
+    cachedCoreMLPythonPath = null;
+    return null;
+  }
+
+  // 1. Check environment variable COREML_PYTHON
+  if (process.env.COREML_PYTHON && fs.existsSync(process.env.COREML_PYTHON)) {
+    cachedCoreMLPythonPath = process.env.COREML_PYTHON;
+    cachedCoreMLAvailable = true;
+    return cachedCoreMLPythonPath;
+  }
+
+  // 2. Check local/in-project venvs
+  const localPaths = [
+    path.join(ROOT, "app", "backend", "mac", "coreml_venv", "bin", "python"),
+    path.join(ROOT, "app", "backend", "mac", "venv", "bin", "python"),
+    path.join(ROOT, "venv", "bin", "python"),
+  ];
+
+  for (const p of localPaths) {
+    if (fs.existsSync(p)) {
+      cachedCoreMLPythonPath = p;
+      cachedCoreMLAvailable = true;
+      return p;
+    }
+  }
+
+  // 3. Check dynamically in home directory (as fallback to user's setup)
+  const homeDir = os.homedir();
+  const homePaths = [
+    path.join(homeDir, "workspace", "coreml_conversion", "venv", "bin", "python"),
+    path.join(homeDir, "ml-stable-diffusion", "venv", "bin", "python"),
+  ];
+
+  for (const p of homePaths) {
+    if (fs.existsSync(p)) {
+      cachedCoreMLPythonPath = p;
+      cachedCoreMLAvailable = true;
+      return p;
+    }
+  }
+
+  // 4. Fallback: Probe system python3 if it has required imports
+  try {
+    const probeResult = spawnSync("python3", [
+      "-c",
+      "import python_coreml_stable_diffusion, diffusers, transformers"
+    ], { timeout: 2000 });
+    
+    if (probeResult.status === 0) {
+      // Find absolute path of python3
+      const whichResult = spawnSync("which", ["python3"], { encoding: "utf8" });
+      const python3Path = whichResult.stdout ? whichResult.stdout.trim() : "python3";
+      cachedCoreMLPythonPath = python3Path;
+      cachedCoreMLAvailable = true;
+      return python3Path;
+    }
+  } catch (err) {
+    // python3 not in path or crashed
+  }
+
+  cachedCoreMLAvailable = false;
+  cachedCoreMLPythonPath = null;
+  return null;
+}
+
+function getCoreMLNpuInfo() {
+  const isAppleSilicon = osPlatform === "darwin" && os.arch() === "arm64";
+  if (!isAppleSilicon) {
+    return { supported: false, reason: "Apple Silicon ANE (NPU) is only available on Apple Silicon macOS devices." };
+  }
+
+  const pythonPath = getCoreMLPythonPath();
+  if (!pythonPath) {
+    return {
+      supported: true,
+      ready: false,
+      reason: "CoreML Python environment is not set up. Run scripts/setup-coreml-npu.sh first.",
+    };
+  }
+
+  return {
+    supported: true,
+    ready: true,
+    python: pythonPath,
+  };
+}
+
 function getBackendOptions() {
   if (cachedBackendOptions) return cachedBackendOptions;
 
@@ -798,14 +895,14 @@ function getBackendOptions() {
   const cpuInstalled = osPlatform === "linux" && fs.existsSync(BACKEND_PATHS.linuxCpu);
   const metalInstalled = osPlatform === "darwin" && fs.existsSync(BACKEND_PATHS.mac);
   const metalAvailable = metalInstalled;
-  const coremlAvailable = osPlatform === "darwin" && fs.existsSync("/Users/orailnoor/workspace/coreml_conversion/venv/bin/python");
+  const coremlNpu = getCoreMLNpuInfo();
   const openvinoNpu = getOpenVinoNpuInfo();
   const openvinoModels = getOpenVinoModelInfo();
   const openvinoNpuAvailable = openvinoNpu.supported && openvinoModels.some((model) => model.installed);
 
   const options = [{ id: "cpu", label: "CPU", available: true }];
   if (metalAvailable) options.push({ id: "metal", label: "Metal GPU", available: true });
-  if (coremlAvailable) options.push({ id: "apple-npu", label: "Apple Neural Engine (NPU)", available: true });
+  if (coremlNpu.supported && coremlNpu.ready) options.push({ id: "apple-npu", label: "Apple Neural Engine (NPU)", available: true });
   if (vulkanAvailable) options.push({ id: "vulkan", label: "Vulkan GPU", available: true });
   if (rocmAvailable) options.push({ id: "rocm", label: "ROCm GPU (AMD)", available: true });
   if (cudaAvailable) options.push({ id: "cuda", label: "CUDA GPU", available: true });
@@ -824,6 +921,9 @@ function getBackendOptions() {
   if (metalInstalled && !metalAvailable) {
     unavailable.push({ id: "metal", label: "Metal GPU", reason: "Installed, but Metal backend validation failed." });
   }
+  if (coremlNpu.supported && !coremlNpu.ready) {
+    unavailable.push({ id: "apple-npu", label: "Apple Neural Engine (NPU)", reason: coremlNpu.reason });
+  }
   if (openvinoNpu.supported && !openvinoNpuAvailable) {
     unavailable.push({ id: "openvino-npu", label: "NPU (OpenVINO)", reason: "Runtime is ready, but no OpenVINO NPU model is downloaded." });
   } else if (!openvinoNpu.supported && (osPlatform === "win32" || osPlatform === "linux")) {
@@ -831,7 +931,7 @@ function getBackendOptions() {
   }
 
   let defaultBackend = "cpu";
-  if (coremlAvailable) {
+  if (coremlNpu.supported && coremlNpu.ready) {
     defaultBackend = "apple-npu";
   } else if (metalAvailable) {
     defaultBackend = "metal";
@@ -859,6 +959,7 @@ function getBackendOptions() {
     openvinoNpuAvailable,
     openvinoNpu,
     openvinoModels,
+    coremlNpu,
     defaultBackendType: defaultBackend,
   };
   return cachedBackendOptions;
@@ -948,7 +1049,7 @@ function selectBackendPath(useGpu, backendType = "auto", modelPath = "") {
     return BACKEND_PATH;
   }
   if (osPlatform === "darwin") {
-    if (resolvedType === "apple-npu") return "/Users/orailnoor/workspace/coreml_conversion/venv/bin/python";
+    if (resolvedType === "apple-npu") return getCoreMLPythonPath();
     if (fs.existsSync(BACKEND_PATHS.mac)) return BACKEND_PATHS.mac;
     return BACKEND_PATH;
   }
@@ -963,9 +1064,10 @@ function resolveBackendType(useGpu, backendType = "auto", modelPath = "") {
 
   if (modelPath && osPlatform === "darwin") {
     const lower = modelPath.toLowerCase();
+    const isDir = fs.existsSync(modelPath) && fs.statSync(modelPath).isDirectory();
     if (lower.endsWith(".safetensors") || lower.endsWith(".gguf")) {
       if (requestedType === "apple-npu") requestedType = "metal";
-    } else if (lower.endsWith(".coreml") || lower.endsWith(".mlpackage") || lower.endsWith(".mlmodelc")) {
+    } else if (lower.endsWith(".coreml") || lower.endsWith(".mlpackage") || lower.endsWith(".mlmodelc") || isDir) {
       if (requestedType === "metal") requestedType = "apple-npu";
     }
   }
@@ -1222,9 +1324,11 @@ async function generateWithOpenVino(body) {
 
 function startBackendReadyPoll() {
   let attempts = 0;
+  const isNpu = currentSettings.backendType === "apple-npu" || currentSettings.backendType === "openvino-npu";
+  const maxAttempts = isNpu ? 1200 : 240;
   const interval = setInterval(async () => {
     attempts += 1;
-    if (!backendProc || backendReady || attempts > 240) {
+    if (!backendProc || backendReady || attempts > maxAttempts) {
       clearInterval(interval);
       return;
     }
@@ -1367,9 +1471,6 @@ async function startBackend(settings = {}) {
     }
     args.push("--rng", "cpu", "--sampler-rng", "cpu");
   } else if (requestedBackend === "metal") {
-    if (supportsFlags) {
-      args.push("--backend", "metal0", "--params-backend", "metal0");
-    }
     args.push("--rng", "cpu", "--sampler-rng", "cpu");
   }
 
@@ -1451,14 +1552,17 @@ async function startBackend(settings = {}) {
         const current = parseInt(loadMatch[1], 10);
         const total = parseInt(loadMatch[2], 10);
         const progress = total > 0 ? Math.round((current / total) * 100) : 0;
+        const isCoreML = currentSettings.backendType === "apple-npu" || total <= 10;
+        const phaseDesc = isCoreML ? stripAnsi(loadMatch[3]).trim() : "Loading model weights...";
+        const speedDesc = isCoreML ? "" : stripAnsi(loadMatch[3]).trim();
         backendLoadState = {
           ...backendLoadState,
           active: !backendReady,
-          phase: "Loading model weights...",
+          phase: phaseDesc,
           progress: Math.max(backendLoadState.progress, Math.min(99, progress)),
           current,
           total,
-          speed: stripAnsi(loadMatch[3]).trim(),
+          speed: speedDesc,
         };
       }
       
@@ -1887,7 +1991,41 @@ const MIME = {
 
 function isModelFile(filename) {
   const lower = String(filename || "").toLowerCase();
-  return lower.endsWith(".safetensors") || lower.endsWith(".gguf") || lower.endsWith(".ckpt") || lower.endsWith(".coreml") || lower.endsWith(".coreml.zip");
+  if (lower.endsWith(".safetensors") || lower.endsWith(".gguf") || lower.endsWith(".ckpt") || lower.endsWith(".coreml") || lower.endsWith(".coreml.zip")) {
+    return true;
+  }
+  const fullPath = path.join(MODELS, filename);
+  try {
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      const files = fs.readdirSync(fullPath).map(f => f.toLowerCase());
+      const hasTextEncoder = files.includes("text_encoder.mlpackage") || 
+                             files.includes("text_encoder.mlmodelc") ||
+                             files.includes("textencoder.mlpackage") || 
+                             files.includes("textencoder.mlmodelc");
+      
+      const hasUnet = files.includes("unet.mlpackage") || 
+                      files.includes("unet.mlmodelc");
+                      
+      if (hasTextEncoder && hasUnet) return true;
+      
+      const checkSubdirs = ["split_einsum/packages", "split_einsum/compiled", "original/packages", "original/compiled", "split_einsum", "original"];
+      for (const subdir of checkSubdirs) {
+        const subPath = path.join(fullPath, subdir);
+        if (fs.existsSync(subPath)) {
+          const subFiles = fs.readdirSync(subPath).map(f => f.toLowerCase());
+          const subTextEncoder = subFiles.includes("text_encoder.mlpackage") || 
+                                 subFiles.includes("text_encoder.mlmodelc") ||
+                                 subFiles.includes("textencoder.mlpackage") || 
+                                 subFiles.includes("textencoder.mlmodelc");
+          const subUnet = subFiles.includes("unet.mlpackage") || 
+                          subFiles.includes("unet.mlmodelc");
+          if (subTextEncoder && subUnet) return true;
+        }
+      }
+    }
+  } catch (_) {}
+  return false;
 }
 
 function formatBytes(bytes) {
@@ -1984,7 +2122,19 @@ function describeBackendExitCode(code, backendPath) {
 
 function getModelInfo(filename) {
   const safeFilename = path.basename(filename || "");
-  const stats = fs.statSync(path.join(MODELS, safeFilename));
+  const fullPath = path.join(MODELS, safeFilename);
+  const stats = fs.statSync(fullPath);
+  
+  if (stats.isDirectory()) {
+    const dirSize = getPathSize(fullPath);
+    return {
+      filename: safeFilename,
+      sizeBytes: dirSize,
+      size: formatBytes(dirSize),
+      format: "CoreML",
+    };
+  }
+
   return {
     filename: safeFilename,
     sizeBytes: stats.size,

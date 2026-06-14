@@ -340,75 +340,7 @@ function App() {
     }
   }, [activeModel]);
 
-  const activeTabContent = useMemo(() => {
-    switch (activeTab) {
-      case "generator":
-        return (
-          <Generator
-            prompt={prompt}
-            setPrompt={setPrompt}
-            negativePrompt={negativePrompt}
-            setNegativePrompt={setNegativePrompt}
-            constraints={constraints}
-            setConstraints={setConstraints}
-            activeModel={activeModel}
-            generatedImages={generatedImages}
-            setGeneratedImages={setGeneratedImages}
-            isGenerating={isGenerating}
-            setIsGenerating={setIsGenerating}
-            generationProgress={generationProgress}
-            setGenerationProgress={setGenerationProgress}
-            setActiveTab={setActiveTab}
-            showAlert={showAlert}
-            showConfirm={showConfirm}
-          />
-        );
-      case "models":
-        return (
-          <ModelManager
-            activeModel={activeModel}
-            setActiveModel={setActiveModel}
-            serverRunning={serverRunning}
-            setServerRunning={setServerRunning}
-            constraints={constraints}
-            backendOptions={backendOptions}
-            showAlert={showAlert}
-            showConfirm={showConfirm}
-          />
-        );
-      case "constraints":
-        return (
-          <ImageConstraints
-            constraints={constraints}
-            setConstraints={setConstraints}
-            activeModel={activeModel}
-            specs={specs}
-            backendOptions={backendOptions}
-            serverRunning={serverRunning}
-            setServerRunning={setServerRunning}
-            setActiveModel={setActiveModel}
-            showAlert={showAlert}
-            showConfirm={showConfirm}
-          />
-        );
-      default:
-        return null;
-    }
-  }, [
-    activeTab,
-    prompt,
-    negativePrompt,
-    constraints,
-    activeModel,
-    generatedImages,
-    isGenerating,
-    generationProgress,
-    serverRunning,
-    specs,
-    backendOptions,
-    showAlert,
-    showConfirm,
-  ]);
+  // Tab contents are kept mounted to preserve loading/generation state when switching tabs
 
   const sidebarContent = useMemo(() => (
     <Sidebar
@@ -507,7 +439,55 @@ function App() {
         )}
 
         {/* Dynamic Workspace Container */}
-        {activeTabContent}
+        <div style={{ display: activeTab === "generator" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
+          <Generator
+            prompt={prompt}
+            setPrompt={setPrompt}
+            negativePrompt={negativePrompt}
+            setNegativePrompt={setNegativePrompt}
+            constraints={constraints}
+            setConstraints={setConstraints}
+            activeModel={activeModel}
+            generatedImages={generatedImages}
+            setGeneratedImages={setGeneratedImages}
+            isGenerating={isGenerating}
+            setIsGenerating={setIsGenerating}
+            generationProgress={generationProgress}
+            setGenerationProgress={setGenerationProgress}
+            setActiveTab={setActiveTab}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
+          />
+        </div>
+
+        <div style={{ display: activeTab === "models" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
+          <ModelManager
+            activeModel={activeModel}
+            setActiveModel={setActiveModel}
+            serverRunning={serverRunning}
+            setServerRunning={setServerRunning}
+            constraints={constraints}
+            backendOptions={backendOptions}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
+            activeTab={activeTab}
+          />
+        </div>
+
+        <div style={{ display: activeTab === "constraints" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
+          <ImageConstraints
+            constraints={constraints}
+            setConstraints={setConstraints}
+            activeModel={activeModel}
+            specs={specs}
+            backendOptions={backendOptions}
+            serverRunning={serverRunning}
+            setServerRunning={setServerRunning}
+            setActiveModel={setActiveModel}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
+          />
+        </div>
       </div>
 
       {dialog && (

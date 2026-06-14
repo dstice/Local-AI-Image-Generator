@@ -285,6 +285,29 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     rm -rf "$BACKEND_DIR/extracted"
     print_ok "macOS Metal backend installed."
   fi
+
+  # CoreML NPU Environment setup (macOS Apple Silicon only)
+  print_info "Setting up CoreML Python virtual environment for Apple Silicon ANE (NPU)..."
+  VENV_DIR="$BACKEND_DIR/coreml_venv"
+  PYTHON_BIN="$VENV_DIR/bin/python"
+  
+  if [[ ! -x "$PYTHON_BIN" ]]; then
+    print_info "Creating Python virtual environment at $VENV_DIR..."
+    if ! python3 -m venv "$VENV_DIR"; then
+      print_warn "Could not create the virtual environment for CoreML. CoreML NPU mode will be unavailable."
+    fi
+  fi
+  
+  if [[ -x "$PYTHON_BIN" ]]; then
+    print_info "Installing CoreML dependencies (this may take a couple of minutes)..."
+    if "$PYTHON_BIN" -m pip install --upgrade pip >/dev/null 2>&1 && \
+       "$PYTHON_BIN" -m pip install numpy coremltools diffusers transformers huggingface-hub pillow >/dev/null 2>&1 && \
+       "$PYTHON_BIN" -m pip install "git+https://github.com/apple/ml-stable-diffusion.git" >/dev/null 2>&1; then
+      print_ok "CoreML ANE (NPU) environment ready."
+    else
+      print_warn "CoreML dependencies installation failed. CoreML NPU mode will be unavailable."
+    fi
+  fi
 else
   VENDOR="$(detect_gpu_vendor)"
   print_step 2 $TOTAL_STEPS "Detecting GPU vendor: ${VENDOR:-none}"

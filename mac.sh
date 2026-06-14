@@ -74,9 +74,12 @@ if [[ -n "$SETUP_REASON" ]]; then
   echo ""
   read -rp "  Press Enter to continue, or Ctrl+C to cancel."
 
-  # Clear any existing frontend server process
-  if command -v fuser >/dev/null 2>&1; then
+  # Clear any existing frontend and backend server processes
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -t -i:"${FRONTEND_PORT}" -i:8080 | xargs kill -9 >/dev/null 2>&1 || true
+  elif command -v fuser >/dev/null 2>&1; then
     fuser -k "${FRONTEND_PORT}/tcp" >/dev/null 2>&1 || true
+    fuser -k "8080/tcp" >/dev/null 2>&1 || true
   fi
 
   if ! bash "$SETUP_SCRIPT"; then
@@ -95,9 +98,12 @@ echo "   LOCAL AI IMAGE GENERATOR  |  Launching..."
 echo "  ============================================================"
 echo ""
 
-# Clear frontend port
-if command -v fuser >/dev/null 2>&1; then
+# Clear frontend and backend ports
+if command -v lsof >/dev/null 2>&1; then
+  lsof -t -i:"${FRONTEND_PORT}" -i:8080 | xargs kill -9 >/dev/null 2>&1 || true
+elif command -v fuser >/dev/null 2>&1; then
   fuser -k "${FRONTEND_PORT}/tcp" >/dev/null 2>&1 || true
+  fuser -k "8080/tcp" >/dev/null 2>&1 || true
 fi
 
 # Start the server

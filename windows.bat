@@ -50,8 +50,9 @@ echo.
 echo  Press any key to continue, or Ctrl+C to cancel.
 pause >nul
 
-:: Clear old frontend server process before setup so app/tools/node-win can be replaced
+:: Clear old frontend and backend server processes before setup so app/tools/node-win can be replaced
 for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":%FRONTEND_PORT% "') do taskkill /f /pid %%a >nul 2>nul
+for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8080 "') do taskkill /f /pid %%a >nul 2>nul
 
 powershell -ExecutionPolicy Bypass -File "%SETUP%"
 if errorlevel 1 (
@@ -73,9 +74,10 @@ echo   LOCAL AI IMAGE GENERATOR  ^|  Launching...
 echo  ============================================================
 echo.
 
-:: Clear only the frontend port. The backend auto-selects a free port.
-echo  Clearing frontend port %FRONTEND_PORT%...
+:: Clear frontend and backend ports to prevent address conflicts.
+echo  Clearing frontend port %FRONTEND_PORT% and backend port 8080...
 for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":%FRONTEND_PORT% "') do taskkill /f /pid %%a >nul 2>nul
+for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8080 "') do taskkill /f /pid %%a >nul 2>nul
 
 :: Start frontend server + backend manager (serve.cjs manages sd-vulkan.exe)
 echo  Starting Local AI Image Generator...

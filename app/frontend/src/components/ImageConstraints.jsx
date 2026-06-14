@@ -36,6 +36,8 @@ function ImageConstraints({
   const availableBackends = backendOptions?.options?.length
     ? backendOptions.options
     : [{ id: "cpu", label: "CPU", available: true }];
+  const isMac = availableBackends.some(b => b.id === "metal" || b.id === "apple-npu") || 
+                (specs?.os_name && (specs.os_name.toLowerCase().includes("darwin") || specs.os_name.toLowerCase().includes("mac")));
 
   useEffect(() => {
     if (isOpenVinoNpu && constraints.steps > 8) {
@@ -185,7 +187,7 @@ function ImageConstraints({
               }}>
                 <Info size={16} style={{ color: "rgb(251, 191, 36)", flexShrink: 0, marginTop: "2px" }} />
                 <div>
-                  <strong>Low-VRAM Protection Active:</strong> Capped at 512x512 for the loaded SD 1.x model (<code>{activeModel}</code>). Generating at larger sizes (like 1024x1024) is disabled to prevent out-of-memory crashes on your {specs && specs.gpu_name && !specs.gpu_name.includes("Loading") ? specs.gpu_name : "graphics processor"}.
+                  <strong>Graphics Memory Protection Active:</strong> Locked at 512x512 size for this model (<code>{activeModel}</code>). Creating larger images (like 1024x1024) is disabled to prevent your {specs && specs.gpu_name && !specs.gpu_name.includes("Loading") ? specs.gpu_name : "graphics processor"} from running out of memory and crashing.
                 </div>
               </div>
             )}
@@ -357,9 +359,13 @@ function ImageConstraints({
                     </div>
                   ))}
                 </div>
-                <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "4px", lineHeight: 1.35 }}>
-                  CPU is slow but safest. Vulkan works on supported GPUs. CUDA is shown only when NVIDIA CUDA support is available.
-                </span>
+                 <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "4px", lineHeight: 1.35 }}>
+                  {isMac ? (
+                    "CPU is slow but safest. Metal uses your Mac's graphics card. Apple Neural Engine (NPU) is highly power-efficient and fast."
+                  ) : (
+                    "CPU is slow but safest. Vulkan works on supported GPUs. CUDA is shown only when NVIDIA CUDA support is available."
+                  )}
+                 </span>
                 {constraints.backendType === "cuda" && specs?.gpu_name && String(specs.gpu_name).toLowerCase().includes("gtx") && (
                   <div style={{
                     marginTop: "12px",
@@ -386,7 +392,7 @@ function ImageConstraints({
               </div>
 
               <div className="m3-text-field" style={{ marginTop: "20px" }}>
-                <label className="m3-text-field-label">Memory Optimization (GPU VRAM)</label>
+                <label className="m3-text-field-label">Memory Optimization (Graphics Memory)</label>
                 
                 <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "10px" }}>
                   <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
@@ -405,7 +411,7 @@ function ImageConstraints({
                     <div>
                       <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Enable VAE Tiling</strong>
                       <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
-                        Processes VAE decoding in smaller tiles. Drastically reduces VRAM usage (from 2GB+ down to ~100MB) with no speed loss. Highly recommended for GPUs with 4GB-6GB VRAM.
+                        Builds the image in smaller, bite-sized sections. This heavily reduces graphics memory usage with no loss in speed. Highly recommended for computers with standard graphics cards.
                       </div>
                     </div>
                   </label>
@@ -426,7 +432,28 @@ function ImageConstraints({
                     <div>
                       <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Run VAE on CPU</strong>
                       <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
-                        Offloads the heavy VAE decoder computation from GPU VRAM to system memory (RAM). Saves ~2GB of VRAM, but makes the final decoding stage slightly slower.
+                        Performs the final image rendering step using your computer's main memory (RAM) instead of graphics memory. Saves graphics memory, but makes the final stage of creating the image slightly slower.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={constraints.useFlashAttn !== false}
+                      onChange={(e) => updateConstraint("useFlashAttn", e.target.checked)}
+                      style={{
+                        width: "16px",
+                        height: "16px",
+                        marginTop: "3px",
+                        accentColor: "var(--md-sys-color-primary)",
+                        cursor: "pointer"
+                      }}
+                    />
+                    <div>
+                      <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Enable Flash Attention</strong>
+                      <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
+                        Accelerates generation using memory-efficient attention. On some specific Mac models or GPUs, this may cause a slight slowdown, so you can disable it if needed.
                       </div>
                     </div>
                   </label>

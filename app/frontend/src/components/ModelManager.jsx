@@ -27,7 +27,7 @@ const MODEL_LIBRARY = [
     ],
   },
   {
-    group: "SD 1.5 - Ultra Fast / Low VRAM",
+    group: "SD 1.5 - Ultra Fast / Low Memory",
     items: [
       {
         name: "DreamShaper 8",
@@ -79,7 +79,24 @@ const OPENVINO_MODEL_LIBRARY = [
   },
 ];
 
-function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRunning, constraints, backendOptions, showAlert = async ({ message }) => window.alert(message), showConfirm = async ({ message }) => window.confirm(message) }) {
+const COREML_MODEL_LIBRARY = [
+  {
+    group: "Apple Silicon NPU - CoreML Test",
+    items: [
+      {
+        name: "Stable Diffusion v1.5 CoreML (split_einsum, palettized 6-bit)",
+        filename: "coreml-stable-diffusion-v1-5-palettized_split_einsum_v2_compiled",
+        format: "CoreML",
+        approxSize: "2.0 GB",
+        resolution: "512x512",
+        notes: "Apple Silicon ANE (Neural Engine) optimized 6-bit palettized Stable Diffusion 1.5 model. Unzips automatically on download completion and runs extremely fast on Mac NPUs.",
+        url: "https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized/resolve/main/coreml-stable-diffusion-v1-5-palettized_split_einsum_v2_compiled.zip",
+      },
+    ],
+  },
+];
+
+function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRunning, constraints, backendOptions, showAlert = async ({ message }) => window.alert(message), showConfirm = async ({ message }) => window.confirm(message), activeTab }) {
   const [localModels, setLocalModels] = useState([]);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [downloadingModelId, setDownloadingModelId] = useState(null);
@@ -96,11 +113,41 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
   const [pendingLoadModel, setPendingLoadModel] = useState(null);
   const [backendInfo, setBackendInfo] = useState({ backendMode: "", backendBinary: "", backendDevice: "" });
 
+  const cancelLoadRef = React.useRef(false);
+  const handleCancelLoad = async () => {
+    cancelLoadRef.current = true;
+    try {
+      await stopServer();
+    } catch (err) {
+      console.warn("Failed to stop server on cancel:", err);
+    }
+  };
+
   const modelNames = localModels.map((model) => normalizeModel(model).filename);
   const isBusy = loadingModelId !== null || isUnloading;
+  
   const openvinoSupported = Boolean(backendOptions?.openvinoNpu?.supported);
-  const visibleModelLibrary = openvinoSupported ? [...MODEL_LIBRARY, ...OPENVINO_MODEL_LIBRARY] : MODEL_LIBRARY;
+  const appleNpuSupported = Boolean(
+    backendOptions?.options?.some((opt) => opt.id === "apple-npu") ||
+    backendOptions?.unavailable?.some((opt) => opt.id === "apple-npu")
+  );
+  
+  let visibleModelLibrary = [...MODEL_LIBRARY];
+  if (openvinoSupported) {
+    visibleModelLibrary = [...visibleModelLibrary, ...OPENVINO_MODEL_LIBRARY];
+  }
+  if (appleNpuSupported) {
+    visibleModelLibrary = [...visibleModelLibrary, ...COREML_MODEL_LIBRARY];
+  }
+  
   const getLocalModelInfo = (modelId) => localModels.map(normalizeModel).find((model) => model.filename === modelId);
+
+  useEffect(() => {
+    if (activeTab === "models") {
+      fetchModels();
+      checkActiveDownload();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     fetchModels();
@@ -258,6 +305,10 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
       }
       return;
     }
+    if (model.format === "CoreML") {
+      downloadByUrl(model.url, `${model.filename}.zip`);
+      return;
+    }
     downloadByUrl(model.url, model.filename);
   };
 
@@ -306,6 +357,7 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
       return;
     }
 
+    cancelLoadRef.current = false;
     setLoadingModelId(modelId);
     setModelLoadProgress({
       progress: 0,
@@ -320,7 +372,18 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     });
     try {
       const modelInfo = getLocalModelInfo(modelId);
-      const loadConstraints = modelInfo?.backendType === "openvino-npu"
+      const isCoreMLModel = modelInfo?.format === "CoreML" || modelInfo?.backendType === "apple-npu";
+      const loadConstraints = isCoreMLModel
+        ? {
+            ...constraints,
+            backendType: "apple-npu",
+            useGpu: true,
+            width: 512,
+            height: 512,
+            steps: constraints.steps || 20,
+            cfgScale: constraints.cfgScale || 7,
+          }
+        : modelInfo?.backendType === "openvino-npu"
         ? {
             ...constraints,
             backendType: "openvino-npu",
@@ -337,8 +400,12 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
       let isReady = false;
       let crashError = null;
       const isOpenVinoModel = modelInfo?.backendType === "openvino-npu";
-      const maxStartupPolls = isOpenVinoModel ? 1200 : 240;
+      const maxStartupPolls = (isOpenVinoModel || isCoreMLModel) ? 1200 : 240;
       for (let i = 0; i < maxStartupPolls; i++) {
+        if (cancelLoadRef.current) {
+          crashError = "Model load cancelled by the user.";
+          break;
+        }
         const status = await getBackendStatus();
         if (status.loading) {
           setModelLoadProgress({
@@ -385,7 +452,9 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
       }
     } catch (e) {
       console.error("Failed to load model:", e);
-      showAlert({ title: "Model Load Failed", message: e.message || String(e), danger: true });
+      if (e.message !== "Model load cancelled by the user.") {
+        showAlert({ title: "Model Load Failed", message: e.message || String(e), danger: true });
+      }
     } finally {
       setTimeout(() => setModelLoadProgress(null), 800);
       setLoadingModelId(null);
@@ -580,9 +649,18 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
 
       {modelLoadProgress && (
         <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-secondary)", marginTop: "16px" }}>
-          <h4 style={{ fontWeight: 700, marginBottom: "8px" }}>
-            Loading Model: {modelLoadProgress.model || loadingModelId}
-          </h4>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", marginBottom: "12px" }}>
+            <h4 style={{ fontWeight: 700, margin: 0 }}>
+              Loading Model: {modelLoadProgress.model || loadingModelId}
+            </h4>
+            <button
+              className="m3-btn m3-btn-error"
+              style={{ height: "30px", padding: "0 12px", fontSize: "0.78rem", borderRadius: "8px" }}
+              onClick={handleCancelLoad}
+            >
+              Cancel Loading
+            </button>
+          </div>
           {(modelLoadProgress.backendMode || modelLoadProgress.backendBinary || modelLoadProgress.device) && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "10px" }}>
               {modelLoadProgress.backendMode && (
@@ -611,7 +689,9 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
               </span>
               <span>
                 {modelLoadProgress.total > 0
-                  ? `Loaded ${modelLoadProgress.current} / ${modelLoadProgress.total} tensors`
+                  ? modelLoadProgress.total <= 10
+                    ? `Loading components: ${modelLoadProgress.current} / ${modelLoadProgress.total} (${Math.round(modelLoadProgress.progress)}%)`
+                    : `Loaded ${modelLoadProgress.current} / ${modelLoadProgress.total} tensors`
                   : `${Math.round(modelLoadProgress.progress)}%`}
               </span>
             </div>
@@ -723,7 +803,7 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px" }}>
               {section.items.map((model) => {
                 const installed = modelNames.includes(model.filename);
-                const downloading = downloadingModelId === model.filename;
+                const downloading = downloadingModelId === model.filename || downloadingModelId === `${model.filename}.zip`;
                 return (
                   <div key={model.filename} style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "14px", background: "var(--md-sys-color-surface-variant)", border: "1px solid var(--md-sys-color-outline-variant)", borderRadius: "var(--md-shape-corner-medium)" }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>

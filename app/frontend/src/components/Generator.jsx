@@ -60,6 +60,12 @@ function Generator({
   const abortControllerRef = useRef(null);
   const hasRealGenerationStepRef = useRef(false);
 
+  React.useEffect(() => {
+    if (constraints.backendType === "apple-npu" || constraints.backendType === "openvino-npu") {
+      setBaseImage(null);
+    }
+  }, [constraints.backendType]);
+
   const handleBaseImageSelect = (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -114,10 +120,9 @@ function Generator({
       try {
         console.log("Settings out of sync, restarting backend...");
         await startServer(activeModel, constraints);
-        
-        let isReady = false;
+                let isReady = false;
         let crashError = null;
-        const maxStartupPolls = constraints.backendType === "openvino-npu" ? 1200 : 240;
+        const maxStartupPolls = (constraints.backendType === "openvino-npu" || constraints.backendType === "apple-npu") ? 1200 : 240;
         for (let i = 0; i < maxStartupPolls; i++) {
           const status = await getBackendStatus();
           if (status.loading) {
@@ -610,61 +615,63 @@ function Generator({
                 />
               </div>
 
-              <div className="m3-text-field">
-                <label className="m3-text-field-label">Base Image (Optional)</label>
-                {baseImage ? (
-                  <div style={{ display: "flex", gap: "12px", alignItems: "center", padding: "12px", background: "var(--md-sys-color-surface-variant)", borderRadius: "var(--md-shape-corner-medium)", border: "1px solid var(--md-sys-color-outline-variant)" }}>
-                    <img src={baseImage} alt="Base" style={{ width: "64px", height: "64px", objectFit: "cover", borderRadius: "8px", flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>Base image ready</div>
-                      <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)" }}>
-                        The AI will redraw this image guided by your prompt.
+              {constraints.backendType !== "apple-npu" && constraints.backendType !== "openvino-npu" && (
+                <div className="m3-text-field">
+                  <label className="m3-text-field-label">Base Image (Optional)</label>
+                  {baseImage ? (
+                    <div style={{ display: "flex", gap: "12px", alignItems: "center", padding: "12px", background: "var(--md-sys-color-surface-variant)", borderRadius: "var(--md-shape-corner-medium)", border: "1px solid var(--md-sys-color-outline-variant)" }}>
+                      <img src={baseImage} alt="Base" style={{ width: "64px", height: "64px", objectFit: "cover", borderRadius: "8px", flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>Base image ready</div>
+                        <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)" }}>
+                          The AI will redraw this image guided by your prompt.
+                        </div>
+                      </div>
+                      <button type="button" className="m3-btn m3-btn-error" style={{ height: "34px", flexShrink: 0 }} onClick={handleClearBaseImage} disabled={isGenerating}>
+                        <Trash2 size={14} />
+                        <span>Remove</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="import-box" style={{ margin: 0, padding: "16px", cursor: isGenerating ? "not-allowed" : "pointer" }}>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        style={{ display: "none" }}
+                        onChange={handleBaseImageSelect}
+                        disabled={isGenerating}
+                      />
+                      <ImagePlus className="import-icon" />
+                      <span style={{ fontWeight: 600 }}>Upload a base image</span>
+                      <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", textAlign: "center" }}>
+                        Optional. Generate a new image based on one of your own.
+                      </span>
+                    </label>
+                  )}
+
+                  {baseImage && (
+                    <div style={{ marginTop: "12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", marginBottom: "4px" }}>
+                        <span>Transformation strength</span>
+                        <span>{constraints.denoisingStrength.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="1"
+                        step="0.05"
+                        value={constraints.denoisingStrength}
+                        onChange={(e) => setConstraints((prev) => ({ ...prev, denoisingStrength: parseFloat(e.target.value) }))}
+                        disabled={isGenerating}
+                        style={{ width: "100%" }}
+                      />
+                      <div style={{ fontSize: "0.72rem", color: "var(--md-sys-color-outline)", marginTop: "2px" }}>
+                        Lower = closer to your image; higher = more creative freedom. 0.7 is a good start.
                       </div>
                     </div>
-                    <button type="button" className="m3-btn m3-btn-error" style={{ height: "34px", flexShrink: 0 }} onClick={handleClearBaseImage} disabled={isGenerating}>
-                      <Trash2 size={14} />
-                      <span>Remove</span>
-                    </button>
-                  </div>
-                ) : (
-                  <label className="import-box" style={{ margin: 0, padding: "16px", cursor: isGenerating ? "not-allowed" : "pointer" }}>
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      style={{ display: "none" }}
-                      onChange={handleBaseImageSelect}
-                      disabled={isGenerating}
-                    />
-                    <ImagePlus className="import-icon" />
-                    <span style={{ fontWeight: 600 }}>Upload a base image</span>
-                    <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", textAlign: "center" }}>
-                      Optional. Generate a new image based on one of your own.
-                    </span>
-                  </label>
-                )}
-
-                {baseImage && (
-                  <div style={{ marginTop: "12px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", marginBottom: "4px" }}>
-                      <span>Transformation strength</span>
-                      <span>{constraints.denoisingStrength.toFixed(2)}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="1"
-                      step="0.05"
-                      value={constraints.denoisingStrength}
-                      onChange={(e) => setConstraints((prev) => ({ ...prev, denoisingStrength: parseFloat(e.target.value) }))}
-                      disabled={isGenerating}
-                      style={{ width: "100%" }}
-                    />
-                    <div style={{ fontSize: "0.72rem", color: "var(--md-sys-color-outline)", marginTop: "2px" }}>
-                      Lower = closer to your image; higher = more creative freedom. 0.7 is a good start.
-                    </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
               {/* Configuration Status Chips (Material 3 style) */}
               <div className="m3-text-field">
