@@ -1,60 +1,61 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Download, LoaderCircle, MessageSquare, Play, Send, Square, Trash2, Upload } from "lucide-react";
+import { Bot, LoaderCircle, Send, Trash2, Square } from "lucide-react";
 import {
   chatWithLlm,
-  deleteLlmModel,
-  downloadLlmModel,
   getDownloadProgress,
   getLlmStatus,
-  importLlmModel,
   listLlmModels,
   startLlm,
   stopLlm,
 } from "../services/api";
 
-const RECOMMENDED_MODELS = [
-  {
-    name: "Qwen2.5 Coder 0.5B Instruct Q4_K_M",
-    size: "491 MB",
-    url: "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
-  },
-  {
-    name: "SmolLM2 1.7B Instruct Q4_K_M",
-    size: "1.1 GB",
-    url: "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf",
-  },
-];
-
-function TextChat({ specs, showAlert, showConfirm }) {
+function TextChat({ specs, showAlert, showConfirm, textSettings, setTextSettings, setActiveModel, setServerRunning }) {
   const [models, setModels] = useState([]);
   const [status, setStatus] = useState({ ready: false, running: false, settings: {} });
   const [selectedModel, setSelectedModel] = useState("");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("You are a helpful local AI assistant.");
   const [isBusy, setIsBusy] = useState(false);
-  const [download, setDownload] = useState(null);
-  const [customUrl, setCustomUrl] = useState("");
-  const [importProgress, setImportProgress] = useState(null);
-  const fileInputRef = useRef(null);
+  const [loadingModel, setLoadingModel] = useState(null);
+  const [tokenUsage, setTokenUsage] = useState({
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0
+  });
+  
   const bottomRef = useRef(null);
   const completedDownloadRef = useRef("");
+  const loadingModelRef = useRef(null);
+
+  useEffect(() => {
+    loadingModelRef.current = loadingModel;
+  }, [loadingModel]);
 
   const refresh = useCallback(async () => {
     const [nextModels, nextStatus] = await Promise.all([listLlmModels(), getLlmStatus()]);
     setModels(nextModels);
     setStatus(nextStatus);
     const active = nextStatus.settings?.model;
-    setSelectedModel((current) => active || current || nextModels[0]?.filename || "");
+    setSelectedModel((current) => {
+      const saved = localStorage.getItem("selectedLlmModel");
+      const savedExists = nextModels.some((m) => m.filename === saved);
+      return active || current || (savedExists ? saved : "") || nextModels[0]?.filename || "";
+    });
   }, []);
 
   useEffect(() => {
     refresh().catch(() => {});
     const timer = setInterval(() => {
-      getLlmStatus().then(setStatus).catch(() => {});
+      getLlmStatus().then((nextStatus) => {
+        setStatus(nextStatus);
+        // If it suddenly loaded or became ready externally, update selection and reset loading states
+        if (nextStatus.ready && nextStatus.settings?.model) {
+          setSelectedModel(nextStatus.settings.model);
+          setLoadingModel(null);
+        }
+      }).catch(() => {});
       getDownloadProgress().then((state) => {
         if (state.kind === "text" && (state.active || state.error || state.progress === 100)) {
-          setDownload(state);
           const completionKey = `${state.filename || ""}:${state.downloadedBytes || 0}`;
           if (!state.active && !state.error && completedDownloadRef.current !== completionKey) {
             completedDownloadRef.current = completionKey;
@@ -68,33 +69,61 @@ function TextChat({ specs, showAlert, showConfirm }) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isBusy]);
+  }, [messages, isBusy, loadingModel]);
 
-  const loadModel = async () => {
-    if (!selectedModel || isBusy) return;
+  const handleModelChange = async (filename) => {
+    if (!filename) {
+      if (status.ready) {
+        setIsBusy(true);
+        try {
+          await stopLlm();
+          setStatus((prev) => ({ ...prev, ready: false, running: false }));
+          setSelectedModel("");
+          setMessages([]);
+          setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+        } catch (err) {
+          showAlert({ title: "Unload Failed", message: err.message || String(err), danger: true });
+        } finally {
+          setIsBusy(false);
+        }
+      }
+      return;
+    }
+
+    setSelectedModel(filename);
+    localStorage.setItem("selectedLlmModel", filename);
     setIsBusy(true);
+    setLoadingModel(filename);
     try {
-      const result = await startLlm(selectedModel, {
-        threads: specs.cpu_cores_physical || 4,
-        contextSize: 4096,
+      // Unload active image engine if running
+      if (setActiveModel) setActiveModel(null);
+      if (setServerRunning) setServerRunning(false);
+
+      const result = await startLlm(filename, {
+        threads: textSettings?.threads || specs?.cpu_cores_physical || 4,
+        contextSize: textSettings?.contextSize || 4096,
         gpuLayers: -1,
       });
       setStatus({ ...status, ...result, ready: true, running: true, settings: result.settings });
+      setMessages([]);
+      setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
     } catch (err) {
-      showAlert({ title: "Text Model Load Failed", message: err.message, danger: true });
+      if (loadingModelRef.current === filename) {
+        showAlert({ title: "Text Model Load Failed", message: err.message, danger: true });
+      }
     } finally {
+      setLoadingModel(null);
       setIsBusy(false);
     }
   };
 
-  const unloadModel = async () => {
-    setIsBusy(true);
+  const handleCancelLlmLoad = async () => {
     try {
       await stopLlm();
-      setStatus((current) => ({ ...current, ready: false, running: false }));
-    } finally {
-      setIsBusy(false);
-    }
+    } catch (_) {}
+    setLoadingModel(null);
+    setIsBusy(false);
+    setSelectedModel("");
   };
 
   const sendMessage = async () => {
@@ -105,12 +134,19 @@ function TextChat({ specs, showAlert, showConfirm }) {
     setInput("");
     setIsBusy(true);
     try {
+      const systemPrompt = textSettings?.systemPrompt || "You are a helpful local AI assistant.";
       const requestMessages = [
         ...(systemPrompt.trim() ? [{ role: "system", content: systemPrompt.trim() }] : []),
         ...nextMessages,
       ];
-      const content = await chatWithLlm(requestMessages, { temperature: 0.7, maxTokens: 768 });
-      setMessages([...nextMessages, { role: "assistant", content }]);
+      const response = await chatWithLlm(requestMessages, { 
+        temperature: textSettings?.temperature || 0.7, 
+        maxTokens: 768 
+      });
+      setMessages([...nextMessages, { role: "assistant", content: response.content }]);
+      if (response.usage) {
+        setTokenUsage(response.usage);
+      }
     } catch (err) {
       setMessages([...nextMessages, { role: "assistant", content: `Error: ${err.message}`, error: true }]);
     } finally {
@@ -118,77 +154,206 @@ function TextChat({ specs, showAlert, showConfirm }) {
     }
   };
 
-  const startDownload = async (url) => {
-    if (!url || download?.active) return;
-    try {
-      const result = await downloadLlmModel(url);
-      setDownload({ active: true, filename: result.filename, progress: 0, kind: "text" });
-      setCustomUrl("");
-    } catch (err) {
-      showAlert({ title: "Text Model Download Failed", message: err.message, danger: true });
-    }
-  };
-
-  const importFile = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".gguf")) {
-      showAlert({ title: "Unsupported File", message: "Text models must use the .gguf format.", danger: true });
-      return;
-    }
-    try {
-      await importLlmModel(file, (progress) => setImportProgress(progress));
-      setImportProgress(null);
-      await refresh();
-      setSelectedModel(file.name);
-    } catch (err) {
-      setImportProgress(null);
-      showAlert({ title: "Text Model Import Failed", message: err.message, danger: true });
-    }
-  };
-
-  const removeModel = async (filename) => {
-    const confirmed = await showConfirm({
-      title: "Delete Text Model?",
-      message: `Delete "${filename}" from app/llm-models?`,
-      confirmLabel: "Delete",
-      danger: true,
-    });
-    if (!confirmed) return;
-    await deleteLlmModel(filename);
-    if (selectedModel === filename) setSelectedModel("");
-    await refresh();
+  const handleClearChat = () => {
+    setMessages([]);
+    setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   };
 
   return (
     <div className="text-chat-layout">
       <section className="text-chat-main">
-        <div className="text-chat-header">
-          <div>
-            <h2><MessageSquare size={22} /> Text Chat</h2>
-            <p>Private chat powered by llama.cpp and local GGUF models.</p>
+        <div className="text-chat-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <select
+              value={selectedModel}
+              onChange={(e) => handleModelChange(e.target.value)}
+              disabled={isBusy}
+              style={{
+                fontSize: "0.95rem",
+                fontWeight: "600",
+                border: "1px solid var(--border-color)",
+                borderRadius: "var(--md-shape-corner-medium)",
+                background: "var(--md-sys-color-surface-variant)",
+                color: "var(--md-sys-color-on-surface)",
+                padding: "8px 16px",
+                outline: "none",
+                cursor: "pointer",
+                minWidth: "220px"
+              }}
+            >
+              <option value="">No model loaded (Select GGUF)</option>
+              {models.map((m) => (
+                <option key={m.filename} value={m.filename}>
+                  {m.filename} {m.filename === status.settings?.model && status.ready ? "• Active" : ""}
+                </option>
+              ))}
+            </select>
+            {isBusy && !loadingModel && <LoaderCircle className="progress-spinner" size={16} />}
+            {selectedModel && (!status.ready || status.settings?.model !== selectedModel) && !loadingModel && (
+              <button
+                className="m3-btn m3-btn-filled"
+                onClick={() => handleModelChange(selectedModel)}
+                disabled={isBusy}
+                style={{
+                  height: "38px",
+                  padding: "0 16px",
+                  fontSize: "0.85rem",
+                  borderRadius: "var(--md-shape-corner-medium)",
+                  background: "var(--md-sys-color-primary)",
+                  color: "var(--md-sys-color-on-primary)",
+                  cursor: "pointer",
+                  border: "none",
+                  fontWeight: "600",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+              >
+                Load Model
+              </button>
+            )}
           </div>
-          <span className={`text-engine-badge ${status.ready ? "ready" : ""}`}>
-            {status.ready ? `${status.settings?.backendMode || status.backendMode || "llama.cpp"} ready` : status.backendInstalled ? "Backend installed" : "Run setup to install llama.cpp"}
-          </span>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+            {/* Active Backend status info */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ 
+                display: "inline-block", 
+                width: "8px", 
+                height: "8px", 
+                borderRadius: "50%", 
+                background: status.ready ? "var(--md-sys-color-success)" : "var(--md-sys-color-outline-variant)",
+                flexShrink: 0
+              }}></span>
+              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+                <span style={{ fontSize: "0.68rem", color: "var(--md-sys-color-outline)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  Active Backend
+                </span>
+                <span style={{ fontSize: "0.85rem", fontWeight: "700", color: status.ready ? "var(--md-sys-color-on-surface)" : "var(--md-sys-color-outline)" }}>
+                  {status.ready ? (status.settings?.backendMode || "llama.cpp") : "Offline"}
+                  {status.ready && ` (${status.settings?.threads || 4}T)`}
+                </span>
+              </div>
+            </div>
+
+            {/* Small circular gauge for context */}
+            {(() => {
+              const maxTokens = status.settings?.contextSize || 4096;
+              const used = tokenUsage.total_tokens || 0;
+              const percent = Math.min(100, Math.round((used / maxTokens) * 100));
+              
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }} title={`Context Used: ${used} / ${maxTokens} tokens`}>
+                  <div style={{ position: "relative", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="40" height="40" viewBox="0 0 40 40">
+                      <circle cx="20" cy="20" r="16" stroke="var(--border-color)" strokeWidth="3" fill="transparent" />
+                      <circle 
+                        cx="20" 
+                        cy="20" 
+                        r="16" 
+                        stroke="var(--md-sys-color-primary)" 
+                        strokeWidth="3" 
+                        fill="transparent" 
+                        strokeDasharray={2 * Math.PI * 16}
+                        strokeDashoffset={2 * Math.PI * 16 * (1 - percent / 100)}
+                        strokeLinecap="round"
+                        transform="rotate(-90 20 20)"
+                        style={{ transition: "stroke-dashoffset 0.35s" }}
+                      />
+                    </svg>
+                    <div style={{ position: "absolute", textAlign: "center" }}>
+                      <span style={{ fontSize: "0.65rem", fontWeight: "700" }}>{percent}%</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
+                    <span style={{ fontSize: "0.65rem", color: "var(--md-sys-color-outline)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Context Used
+                    </span>
+                    <span style={{ fontSize: "0.8rem", fontWeight: "600", color: "var(--md-sys-color-on-surface)" }}>
+                      {used} / {maxTokens}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Clear Conversation button */}
+            <button 
+              className="m3-btn m3-btn-outlined" 
+              style={{ 
+                height: "36px", 
+                padding: "0 12px", 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "6px", 
+                fontSize: "0.82rem",
+                borderRadius: "var(--md-shape-corner-medium)"
+              }}
+              onClick={handleClearChat}
+              disabled={messages.length === 0}
+            >
+              <Trash2 size={15} />
+              <span>Clear</span>
+            </button>
+          </div>
         </div>
 
         <div className="chat-messages">
-          {messages.length === 0 && (
-            <div className="chat-empty">
-              <Bot size={42} />
-              <h3>Local text generation</h3>
-              <p>Choose a GGUF model, load it, and start chatting. Loading text automatically unloads the image engine.</p>
+          {loadingModel ? (
+            <div className="chat-empty" style={{ maxWidth: "480px", margin: "auto", textAlign: "center", padding: "60px 20px" }}>
+              <LoaderCircle className="progress-spinner" size={48} style={{ color: "var(--md-sys-color-primary)", marginBottom: "16px" }} />
+              <h3 style={{ fontWeight: 600, fontSize: "1.25rem", marginBottom: "8px", color: "var(--md-sys-color-on-surface)" }}>Loading Text Model</h3>
+              <code style={{ 
+                display: "block", 
+                background: "var(--md-sys-color-surface-variant)", 
+                color: "var(--md-sys-color-on-surface-variant)",
+                padding: "8px 12px", 
+                borderRadius: "6px", 
+                fontSize: "0.85rem",
+                marginBottom: "20px",
+                wordBreak: "break-all",
+                fontFamily: "monospace"
+              }}>
+                {loadingModel}
+              </code>
+              <p style={{ fontSize: "0.9rem", color: "var(--md-sys-color-outline)", lineHeight: 1.5, marginBottom: "24px" }}>
+                Initializing llama.cpp server and loading the model weights into memory. This can take up to 30 seconds depending on model size and hardware speed.
+              </p>
+              <button 
+                className="m3-btn m3-btn-error" 
+                onClick={handleCancelLlmLoad}
+                style={{ 
+                  display: "inline-flex", 
+                  alignItems: "center", 
+                  gap: "8px",
+                  height: "38px",
+                  padding: "0 16px",
+                  fontSize: "0.85rem",
+                  borderRadius: "var(--md-shape-corner-medium)"
+                }}
+              >
+                <Square size={14} fill="currentColor" />
+                <span>Cancel Load</span>
+              </button>
             </div>
+          ) : (
+            <>
+              {messages.length === 0 && (
+                <div className="chat-empty">
+                  <Bot size={42} />
+                  <h3>Local ChatGPT-style Interface</h3>
+                  <p>Choose a GGUF text model above to load it. Your conversation history stays completely private on this machine.</p>
+                </div>
+              )}
+              {messages.map((message, index) => (
+                <div key={`${message.role}-${index}`} className={`chat-message ${message.role} ${message.error ? "error" : ""}`}>
+                  <strong>{message.role === "user" ? "You" : "Local AI"}</strong>
+                  <div>{message.content}</div>
+                </div>
+              ))}
+              {isBusy && status.ready && <div className="chat-thinking"><LoaderCircle className="progress-spinner" size={16} /> Generating...</div>}
+            </>
           )}
-          {messages.map((message, index) => (
-            <div key={`${message.role}-${index}`} className={`chat-message ${message.role} ${message.error ? "error" : ""}`}>
-              <strong>{message.role === "user" ? "You" : "Local AI"}</strong>
-              <div>{message.content}</div>
-            </div>
-          ))}
-          {isBusy && status.ready && <div className="chat-thinking"><LoaderCircle className="progress-spinner" size={16} /> Generating...</div>}
           <div ref={bottomRef} />
         </div>
 
@@ -202,7 +367,7 @@ function TextChat({ specs, showAlert, showConfirm }) {
                 sendMessage();
               }
             }}
-            placeholder={status.ready ? "Message your local model..." : "Load a text model to begin"}
+            placeholder={status.ready ? "Message your local model..." : "Select and load a GGUF model above to begin"}
             disabled={!status.ready || isBusy}
           />
           <button className="m3-btn m3-btn-filled" onClick={sendMessage} disabled={!input.trim() || !status.ready || isBusy}>
@@ -210,60 +375,6 @@ function TextChat({ specs, showAlert, showConfirm }) {
           </button>
         </div>
       </section>
-
-      <aside className="text-chat-settings">
-        <div className="m3-card">
-          <h3 className="m3-card-title">Text Model</h3>
-          <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={status.running || isBusy}>
-            <option value="">Select a GGUF model</option>
-            {models.map((model) => <option key={model.filename} value={model.filename}>{model.filename} ({model.size})</option>)}
-          </select>
-          <div className="text-model-actions">
-            {!status.running ? (
-              <button className="m3-btn m3-btn-filled" onClick={loadModel} disabled={!selectedModel || isBusy}>
-                {isBusy ? <LoaderCircle className="progress-spinner" size={16} /> : <Play size={16} />} Load
-              </button>
-            ) : (
-              <button className="m3-btn m3-btn-error" onClick={unloadModel} disabled={isBusy}>
-                <Square size={16} /> Unload
-              </button>
-            )}
-            <button className="m3-btn m3-btn-outlined" onClick={() => fileInputRef.current?.click()} disabled={isBusy}>
-              <Upload size={16} /> Import
-            </button>
-            <input ref={fileInputRef} type="file" accept=".gguf" hidden onChange={importFile} />
-          </div>
-          {importProgress && <p className="text-progress">Importing: {Math.round(importProgress.progress || 0)}%</p>}
-          {models.map((model) => (
-            <div className="text-local-model" key={model.filename}>
-              <span title={model.filename}>{model.filename}</span>
-              <button title="Delete model" onClick={() => removeModel(model.filename)} disabled={status.settings?.model === model.filename && status.running}>
-                <Trash2 size={15} />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="m3-card">
-          <h3 className="m3-card-title">System Prompt</h3>
-          <textarea className="system-prompt" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} />
-        </div>
-
-        <div className="m3-card">
-          <h3 className="m3-card-title">Download GGUF</h3>
-          {RECOMMENDED_MODELS.map((model) => (
-            <button className="text-download-option" key={model.url} onClick={() => startDownload(model.url)} disabled={download?.active}>
-              <span>{model.name}</span><small>{model.size}</small><Download size={16} />
-            </button>
-          ))}
-          <div className="text-url-row">
-            <input value={customUrl} onChange={(event) => setCustomUrl(event.target.value)} placeholder="Direct Hugging Face .gguf URL" />
-            <button className="m3-btn m3-btn-tonal" onClick={() => startDownload(customUrl)} disabled={!customUrl || download?.active}>Download</button>
-          </div>
-          {download?.active && <p className="text-progress">Downloading {download.filename}: {download.progress < 0 ? "starting" : `${download.progress}%`} {download.speed || ""}</p>}
-          {download?.error && !String(download.error).toLowerCase().includes("cancelled") && <p className="text-progress error">{download.error}</p>}
-        </div>
-      </aside>
     </div>
   );
 }

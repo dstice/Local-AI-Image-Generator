@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { Image, FolderDown, MessageSquare, Sliders, Shield, Terminal } from "lucide-react";
+import { Image, FolderDown, MessageSquare, Settings, Shield, Terminal } from "lucide-react";
 
 function Sidebar({ activeTab, setActiveTab, specs }) {
   return (
@@ -38,11 +38,11 @@ function Sidebar({ activeTab, setActiveTab, specs }) {
           </div>
 
           <div
-            className={`nav-item ${activeTab === "constraints" ? "active" : ""}`}
-            onClick={() => setActiveTab("constraints")}
+            className={`nav-item ${activeTab === "settings" ? "active" : ""}`}
+            onClick={() => setActiveTab("settings")}
           >
-            <Sliders size={20} />
-            <span>Image Constraints</span>
+            <Settings size={20} />
+            <span>Settings</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,19 @@
 import React, { memo, useState, useRef, useCallback } from "react";
 import { Sparkles, Download, Copy, RefreshCw, Check, Sliders, Trash2, ImagePlus } from "lucide-react";
-import { generateImage, startServer, stopServer, waitForServerReady, getBackendStatus, getGenerationProgress, saveGeneratedOutput, deleteGeneratedOutputs } from "../services/api";
+import { 
+  generateImage, 
+  startServer, 
+  stopServer, 
+  waitForServerReady, 
+  getBackendStatus, 
+  getGenerationProgress, 
+  saveGeneratedOutput, 
+  deleteGeneratedOutputs,
+  getLlmStatus,
+  listLlmModels,
+  startLlm,
+  chatWithLlm
+} from "../services/api";
 
 const GalleryItem = memo(({ img, idx, isSelected, onClick }) => {
   const handleClick = (e) => {
@@ -39,6 +52,8 @@ function Generator({
   setActiveTab,
   showAlert = async ({ message }) => window.alert(message),
   showConfirm = async ({ message }) => window.confirm(message),
+  specs,
+  textSettings,
 }) {
   const [outputImage, setOutputImage] = useState(null);
   const [outputSeed, setOutputSeed] = useState(null);
@@ -56,9 +71,80 @@ function Generator({
   const [isDecoding, setIsDecoding] = useState(false);
   const [selectedGalleryIndexes, setSelectedGalleryIndexes] = useState([]);
   const [baseImage, setBaseImage] = useState(null);
+  const [isEnhancing, setIsEnhancing] = useState(false);
   const timerRef = useRef(null);
   const abortControllerRef = useRef(null);
   const hasRealGenerationStepRef = useRef(false);
+
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim() || isEnhancing || isGenerating) return;
+    setIsEnhancing(true);
+    try {
+      const status = await getLlmStatus();
+      let targetModel = status.settings?.model;
+      
+      if (!status.ready) {
+        const models = await listLlmModels();
+        if (models.length === 0) {
+          showAlert({
+            title: "No Text Models",
+            message: "You haven't downloaded any text models yet. Please go to the 'Model Manager' or 'Text Chat' tab to download a GGUF model first.",
+            danger: true
+          });
+          setIsEnhancing(false);
+          return;
+        }
+        
+        const savedLlm = localStorage.getItem("selectedLlmModel") || models[0]?.filename;
+        targetModel = models.some(m => m.filename === savedLlm) ? savedLlm : models[0]?.filename;
+        
+        const confirm = await showConfirm({
+          title: "Load Text Model?",
+          message: `Enhancing your prompt requires loading the local text model "${targetModel}". This will temporarily unload the image model from memory. Do you want to proceed?`,
+          confirmLabel: "Load & Enhance",
+          cancelLabel: "Cancel"
+        });
+        
+        if (!confirm) {
+          setIsEnhancing(false);
+          return;
+        }
+        
+        const cores = textSettings?.threads || specs?.cpu_cores_physical || 4;
+        const context = textSettings?.contextSize || 2048;
+        await startLlm(targetModel, {
+          threads: cores,
+          contextSize: context,
+          gpuLayers: -1
+        });
+      }
+      
+      const systemPrompt = "You are a helpful assistant. Rewrite the user's image prompt to be more descriptive and detailed for image generation. Keep it under 80 words. Output ONLY the rewritten prompt, no explanation or introductory text.";
+      const messages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Please expand this prompt: "${prompt}"` }
+      ];
+      
+      const temp = textSettings?.temperature || 0.7;
+      const response = await chatWithLlm(messages, { temperature: temp, maxTokens: 128 });
+      let cleanResponse = response.content.trim();
+      if (cleanResponse.startsWith('"') && cleanResponse.endsWith('"')) {
+        cleanResponse = cleanResponse.slice(1, -1);
+      }
+      cleanResponse = cleanResponse.replace(/^Here is the expanded prompt:?\s*/i, "");
+      cleanResponse = cleanResponse.replace(/^Enhanced prompt:?\s*/i, "");
+      
+      setPrompt(cleanResponse);
+    } catch (err) {
+      showAlert({
+        title: "Prompt Enhancement Failed",
+        message: err.message || String(err),
+        danger: true
+      });
+    } finally {
+      setIsEnhancing(false);
+    }
+  };
 
   React.useEffect(() => {
     if (constraints.backendType === "apple-npu" || constraints.backendType === "openvino-npu") {
@@ -592,7 +678,28 @@ function Generator({
             <div className="m3-field-group">
               {/* Prompt Textarea */}
               <div className="m3-text-field">
-                <label className="m3-text-field-label">Positive Prompt</label>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <label className="m3-text-field-label">Positive Prompt</label>
+                  <button
+                    type="button"
+                    className="m3-btn m3-btn-tonal"
+                    style={{ height: "28px", padding: "0 10px", fontSize: "0.75rem", borderRadius: "14px", display: "flex", alignItems: "center", gap: "4px" }}
+                    onClick={handleEnhancePrompt}
+                    disabled={isGenerating || isEnhancing || !prompt.trim()}
+                  >
+                    {isEnhancing ? (
+                      <>
+                        <span className="progress-spinner" style={{ width: "12px", height: "12px", borderWidth: "2px" }} />
+                        <span>Enhancing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={12} />
+                        <span>Enhance Prompt</span>
+                      </>
+                    )}
+                  </button>
+                </div>
                 <textarea
                   className="m3-textarea"
                   value={prompt}

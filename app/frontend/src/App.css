@@ -222,8 +222,8 @@ body {
 .text-chat-layout {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0px;
   padding: 20px;
   min-height: 0;
 }

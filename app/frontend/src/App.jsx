@@ -3,7 +3,7 @@ import Sidebar from "./components/Sidebar";
 import TopStatusBar from "./components/TopStatusBar";
 import Generator from "./components/Generator";
 import ModelManager from "./components/ModelManager";
-import ImageConstraints from "./components/ImageConstraints";
+import Settings from "./components/Settings";
 import TextChat from "./components/TextChat";
 import { cleanupCandidates, formatBytes, getCleanupCandidates, getDiagnostics, getHardwareSpecs, getHealth, getTelemetry, getBackendOptions, getBackendStatus, listGeneratedOutputs, stopServer } from "./services/api";
 import "./App.css";
@@ -114,6 +114,25 @@ function App() {
     backendType: "auto",
   });
 
+  const [textSettings, setTextSettings] = useState(() => {
+    const saved = localStorage.getItem("textSettings");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (_) {}
+    }
+    return {
+      contextSize: 4096,
+      temperature: 0.7,
+      systemPrompt: "You are a helpful local AI assistant.",
+      threads: 4
+    };
+  });
+
+  useEffect(() => {
+    localStorage.setItem("textSettings", JSON.stringify(textSettings));
+  }, [textSettings]);
+
   // Load hardware specifications on mount
   useEffect(() => {
     async function loadSpecs() {
@@ -128,6 +147,10 @@ function App() {
           threads: hardware.cpu_cores_physical || 4,
           backendType: prev.backendType === "auto" ? backendInfo.defaultBackendType || "cpu" : prev.backendType,
           useGpu: (prev.backendType === "auto" ? backendInfo.defaultBackendType : prev.backendType) !== "cpu",
+        }));
+        setTextSettings((prev) => ({
+          ...prev,
+          threads: prev.threads || hardware.cpu_cores_physical || 4
         }));
       } catch (err) {
         console.error("Error fetching hardware specs:", err);
@@ -458,6 +481,8 @@ function App() {
             setActiveTab={setActiveTab}
             showAlert={showAlert}
             showConfirm={showConfirm}
+            specs={specs}
+            textSettings={textSettings}
           />
         </div>
 
@@ -474,6 +499,8 @@ function App() {
             showAlert={showAlert}
             showConfirm={showConfirm}
             activeTab={activeTab}
+            specs={specs}
+            textSettings={textSettings}
           />
         </div>
 
@@ -482,11 +509,15 @@ function App() {
             specs={specs}
             showAlert={showAlert}
             showConfirm={showConfirm}
+            textSettings={textSettings}
+            setTextSettings={setTextSettings}
+            setActiveModel={setActiveModel}
+            setServerRunning={setServerRunning}
           />
         </div>
 
-        <div style={{ display: activeTab === "constraints" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
-          <ImageConstraints
+        <div style={{ display: activeTab === "settings" ? "flex" : "none", flex: 1, flexDirection: "column", overflow: "hidden" }}>
+          <Settings
             constraints={constraints}
             setConstraints={setConstraints}
             activeModel={activeModel}
@@ -497,6 +528,8 @@ function App() {
             setActiveModel={setActiveModel}
             showAlert={showAlert}
             showConfirm={showConfirm}
+            textSettings={textSettings}
+            setTextSettings={setTextSettings}
           />
         </div>
       </div>

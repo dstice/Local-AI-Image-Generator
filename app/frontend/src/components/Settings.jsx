@@ -1,5 +1,5 @@
 import React, { memo, useEffect } from "react";
-import { Crop, Sliders, Cpu, Info } from "lucide-react";
+import { Crop, Sliders, Cpu, Info, MessageSquare, SlidersHorizontal } from "lucide-react";
 import { stopServer } from "../services/api";
 
 const ASPECT_RATIOS = [
@@ -18,7 +18,7 @@ const isSD15OrCustomModel = (modelName) => {
   return true;
 };
 
-function ImageConstraints({
+function Settings({
   constraints,
   setConstraints,
   activeModel,
@@ -27,6 +27,8 @@ function ImageConstraints({
   serverRunning,
   setServerRunning,
   setActiveModel,
+  textSettings,
+  setTextSettings,
   showAlert = async ({ message }) => window.alert(message),
   showConfirm = async ({ message }) => window.confirm(message),
 }) {
@@ -54,6 +56,13 @@ function ImageConstraints({
           ? { npuSteps: value }
           : { standardSteps: value }
         : {}),
+    }));
+  };
+
+  const updateTextSetting = (key, value) => {
+    setTextSettings((prev) => ({
+      ...prev,
+      [key]: value
     }));
   };
 
@@ -138,20 +147,20 @@ function ImageConstraints({
   return (
     <div className="workspace-area">
       <div className="workspace-title-section">
-        <h2 className="workspace-title">Image Constraints</h2>
+        <h2 className="workspace-title">Settings & Parameters</h2>
         <p className="workspace-subtitle">
-          Configure size, quality, and performance controls for image generation.
+          Configure size, quality, and performance controls for local image and text models.
         </p>
       </div>
 
       <div className="generator-layout">
-        {/* Left Column: Size & Quality */}
+        {/* Left Column: Image Settings */}
         <div>
           {/* Card 1: Picture Size & Shape */}
           <div className="m3-card">
             <h3 className="m3-card-title">
               <Crop size={18} style={{ color: "var(--md-sys-color-primary)" }} />
-              1. Picture Size & Shape
+              1. Image Size & Shape
             </h3>
             
             {isOpenVinoNpu ? (
@@ -333,20 +342,176 @@ function ImageConstraints({
               </div>
             </div>
           </div>
+
+          {/* Card 3: Image Memory Optimizations */}
+          <div className="m3-card">
+            <h3 className="m3-card-title">
+              <SlidersHorizontal size={18} style={{ color: "var(--md-sys-color-primary)" }} />
+              3. Image Optimizations
+            </h3>
+            
+            <div className="m3-field-group">
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={constraints.vaeTiling !== false}
+                    onChange={(e) => updateConstraint("vaeTiling", e.target.checked)}
+                    style={{
+                      width: "16px",
+                      height: "16px",
+                      marginTop: "3px",
+                      accentColor: "var(--md-sys-color-primary)",
+                      cursor: "pointer"
+                    }}
+                  />
+                  <div>
+                    <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Enable VAE Tiling</strong>
+                    <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
+                      Builds the image in smaller, bite-sized sections. This heavily reduces graphics memory usage with no loss in speed. Highly recommended for computers with standard graphics cards.
+                    </div>
+                  </div>
+                </label>
+
+                <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={constraints.vaeOnCpu === true}
+                    onChange={(e) => updateConstraint("vaeOnCpu", e.target.checked)}
+                    style={{
+                      width: "16px",
+                      height: "16px",
+                      marginTop: "3px",
+                      accentColor: "var(--md-sys-color-primary)",
+                      cursor: "pointer"
+                    }}
+                  />
+                  <div>
+                    <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Run VAE on CPU</strong>
+                    <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
+                      Performs the final image rendering step using your computer's main memory (RAM) instead of graphics memory. Saves graphics memory, but makes the final stage of creating the image slightly slower.
+                    </div>
+                  </div>
+                </label>
+
+                <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={constraints.useFlashAttn !== false}
+                    onChange={(e) => updateConstraint("useFlashAttn", e.target.checked)}
+                    style={{
+                      width: "16px",
+                      height: "16px",
+                      marginTop: "3px",
+                      accentColor: "var(--md-sys-color-primary)",
+                      cursor: "pointer"
+                    }}
+                  />
+                  <div>
+                    <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Enable Flash Attention</strong>
+                    <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
+                      Accelerates generation using memory-efficient attention. On some specific Mac models or GPUs, this may cause a slight slowdown, so you can disable it if needed.
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Right Column: Speed & System */}
+        {/* Right Column: Text Settings & System */}
         <div>
-          {/* Card 3: Performance hacks */}
+          {/* Card 4: Text Generation Settings (llama.cpp) */}
+          <div className="m3-card">
+            <h3 className="m3-card-title">
+              <MessageSquare size={18} style={{ color: "var(--md-sys-color-primary)" }} />
+              4. Text Generation Settings (GGUF)
+            </h3>
+            
+            <div className="m3-field-group">
+              {/* System Prompt instructions */}
+              <div className="m3-text-field">
+                <label className="m3-text-field-label">Default System Instructions</label>
+                <textarea
+                  value={textSettings.systemPrompt}
+                  onChange={(e) => updateTextSetting("systemPrompt", e.target.value)}
+                  placeholder="Set AI instructions (e.g. 'You are a helpful local assistant')..."
+                  className="system-prompt"
+                  style={{ marginTop: "6px", width: "100%", minHeight: "85px" }}
+                />
+              </div>
+
+              {/* Context size selector */}
+              <div className="m3-text-field" style={{ marginTop: "12px" }}>
+                <label className="m3-text-field-label">Context Window Limit</label>
+                <select
+                  value={textSettings.contextSize}
+                  onChange={(e) => updateTextSetting("contextSize", Number(e.target.value))}
+                  className="m3-input"
+                  style={{ marginTop: "6px", height: "40px", cursor: "pointer" }}
+                >
+                  <option value="2048">2,048 tokens (Fast/Low Memory)</option>
+                  <option value="4096">4,096 tokens (Balanced / Recommended)</option>
+                  <option value="8192">8,192 tokens (More history)</option>
+                  <option value="16384">16,384 tokens (Deep context)</option>
+                </select>
+                <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "4px" }}>
+                  Controls the maximum memory allocated for conversation history. Larger limits allow longer chats but use more RAM/VRAM.
+                </span>
+              </div>
+
+              {/* Temperature slider */}
+              <div className="m3-slider-group" style={{ marginTop: "16px" }}>
+                <div className="m3-slider-header">
+                  <span className="m3-slider-label">Temperature (Creativity)</span>
+                  <span className="m3-slider-value">{textSettings.temperature}</span>
+                </div>
+                <input
+                  type="range"
+                  className="m3-slider"
+                  value={textSettings.temperature}
+                  onChange={(e) => updateTextSetting("temperature", parseFloat(e.target.value))}
+                  min="0.1"
+                  max="2.0"
+                  step="0.05"
+                />
+                <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", lineHeight: "1.3" }}>
+                  Lower temperature produces focused and coherent replies; higher temperature allows more creative and diverse responses.
+                </span>
+              </div>
+
+              {/* CPU Threads slider */}
+              <div className="m3-slider-group" style={{ marginTop: "16px" }}>
+                <div className="m3-slider-header">
+                  <span className="m3-slider-label">CPU Threads</span>
+                  <span className="m3-slider-value">{textSettings.threads} threads</span>
+                </div>
+                <input
+                  type="range"
+                  className="m3-slider"
+                  value={textSettings.threads}
+                  onChange={(e) => updateTextSetting("threads", parseInt(e.target.value))}
+                  min="1"
+                  max={Math.max(16, specs?.cpu_cores_logical || 16)}
+                  step="1"
+                />
+                <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", lineHeight: "1.3" }}>
+                  Number of physical CPU threads allocated for computation. Typically should match or be slightly lower than your physical cores.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 5: System Settings (Generation Backend) */}
           <div className="m3-card">
             <h3 className="m3-card-title">
               <Cpu size={18} style={{ color: "var(--md-sys-color-primary)" }} />
-              3. System Settings
+              5. Image Generation Backend
             </h3>
             
             <div className="m3-field-group">
               <div className="m3-text-field">
-                <label className="m3-text-field-label">Generation Backend</label>
+                <label className="m3-text-field-label">Active Image Accelerator</label>
                 <div className="m3-segmented-button">
                   {availableBackends.map((backend) => (
                     <div
@@ -354,6 +519,7 @@ function ImageConstraints({
                       className={`m3-segment-item ${constraints.backendType === backend.id || (!constraints.backendType && backend.id === "cpu") ? "active" : ""}`}
                       onClick={() => handleBackendChange(backend.id)}
                       title={backend.id === "cuda" ? "CUDA appears only when an NVIDIA CUDA backend is available." : undefined}
+                      style={{ cursor: "pointer" }}
                     >
                       {backend.label}
                     </div>
@@ -366,6 +532,7 @@ function ImageConstraints({
                     "CPU is slow but safest. Vulkan works on supported GPUs. CUDA is shown only when NVIDIA CUDA support is available."
                   )}
                  </span>
+                
                 {constraints.backendType === "cuda" && specs?.gpu_name && String(specs.gpu_name).toLowerCase().includes("gtx") && (
                   <div style={{
                     marginTop: "12px",
@@ -380,6 +547,7 @@ function ImageConstraints({
                     <strong>Performance Alert:</strong> Your graphics card (<code>{specs.gpu_name}</code>) is a GTX-series GPU which lacks hardware <strong>Tensor Cores</strong>. Running in CUDA mode will be up to 3x slower. We strongly recommend switching to <strong>Vulkan GPU</strong> for optimal generation speed.
                   </div>
                 )}
+                
                 {backendOptions?.unavailable?.length > 0 && (
                   <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "4px" }}>
                     {backendOptions.unavailable.map((backend) => (
@@ -390,75 +558,6 @@ function ImageConstraints({
                   </div>
                 )}
               </div>
-
-              <div className="m3-text-field" style={{ marginTop: "20px" }}>
-                <label className="m3-text-field-label">Memory Optimization (Graphics Memory)</label>
-                
-                <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "10px" }}>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={constraints.vaeTiling !== false}
-                      onChange={(e) => updateConstraint("vaeTiling", e.target.checked)}
-                      style={{
-                        width: "16px",
-                        height: "16px",
-                        marginTop: "3px",
-                        accentColor: "var(--md-sys-color-primary)",
-                        cursor: "pointer"
-                      }}
-                    />
-                    <div>
-                      <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Enable VAE Tiling</strong>
-                      <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
-                        Builds the image in smaller, bite-sized sections. This heavily reduces graphics memory usage with no loss in speed. Highly recommended for computers with standard graphics cards.
-                      </div>
-                    </div>
-                  </label>
-
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={constraints.vaeOnCpu === true}
-                      onChange={(e) => updateConstraint("vaeOnCpu", e.target.checked)}
-                      style={{
-                        width: "16px",
-                        height: "16px",
-                        marginTop: "3px",
-                        accentColor: "var(--md-sys-color-primary)",
-                        cursor: "pointer"
-                      }}
-                    />
-                    <div>
-                      <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Run VAE on CPU</strong>
-                      <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
-                        Performs the final image rendering step using your computer's main memory (RAM) instead of graphics memory. Saves graphics memory, but makes the final stage of creating the image slightly slower.
-                      </div>
-                    </div>
-                  </label>
-
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer", fontSize: "0.85rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={constraints.useFlashAttn !== false}
-                      onChange={(e) => updateConstraint("useFlashAttn", e.target.checked)}
-                      style={{
-                        width: "16px",
-                        height: "16px",
-                        marginTop: "3px",
-                        accentColor: "var(--md-sys-color-primary)",
-                        cursor: "pointer"
-                      }}
-                    />
-                    <div>
-                      <strong style={{ color: "var(--md-sys-color-on-surface)" }}>Enable Flash Attention</strong>
-                      <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "2px", lineHeight: 1.35 }}>
-                        Accelerates generation using memory-efficient attention. On some specific Mac models or GPUs, this may cause a slight slowdown, so you can disable it if needed.
-                      </div>
-                    </div>
-                  </label>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -467,4 +566,4 @@ function ImageConstraints({
   );
 }
 
-export default memo(ImageConstraints);
+export default memo(Settings);

@@ -353,7 +353,10 @@ export async function chatWithLlm(messages, options = {}) {
   const data = await readJsonResponse(res, "The local text model returned an invalid response.");
   const content = data?.choices?.[0]?.message?.content;
   if (!content) throw new Error("The text model returned an empty response.");
-  return content;
+  return {
+    content,
+    usage: data?.usage || null
+  };
 }
 
 export async function downloadLlmModel(url) {

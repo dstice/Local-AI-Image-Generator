@@ -1,6 +1,27 @@
-import React, { memo, useState, useEffect } from "react";
+import React, { memo, useState, useEffect, useCallback } from "react";
 import { FolderOpen, DownloadCloud, RefreshCw, Database, Trash2, Square, HardDrive, Library, AlertTriangle } from "lucide-react";
-import { listLocalModels, startServer, stopServer, importModelFile, deleteModel, downloadModel, downloadOpenVinoModel, cancelModelDownload, getDownloadProgress, getBackendStatus, pingServer, formatBytes, normalizeModel } from "../services/api";
+import { 
+  listLocalModels, 
+  startServer, 
+  stopServer, 
+  importModelFile, 
+  deleteModel, 
+  downloadModel, 
+  downloadOpenVinoModel, 
+  cancelModelDownload, 
+  getDownloadProgress, 
+  getBackendStatus, 
+  pingServer, 
+  formatBytes, 
+  normalizeModel,
+  listLlmModels,
+  startLlm,
+  stopLlm,
+  downloadLlmModel,
+  deleteLlmModel,
+  importLlmModel,
+  getLlmStatus
+} from "../services/api";
 
 const MODEL_LIBRARY = [
   {
@@ -60,6 +81,32 @@ const MODEL_LIBRARY = [
   },
 ];
 
+const TEXT_MODEL_LIBRARY = [
+  {
+    group: "Recommended Text Models (llama.cpp)",
+    items: [
+      {
+        name: "Qwen2.5 Coder 0.5B Instruct Q4_K_M",
+        filename: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+        format: "GGUF",
+        approxSize: "491 MB",
+        resolution: "N/A",
+        notes: "Extremely fast, lightweight assistant, perfect for low RAM/VRAM machines.",
+        url: "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+      },
+      {
+        name: "SmolLM2 1.7B Instruct Q4_K_M",
+        filename: "smollm2-1.7b-instruct-q4_k_m.gguf",
+        format: "GGUF",
+        approxSize: "1.1 GB",
+        resolution: "N/A",
+        notes: "Excellent lightweight assistant with strong logic, reasoning, and prompt expansion capabilities.",
+        url: "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf",
+      },
+    ],
+  },
+];
+
 const OPENVINO_MODEL_LIBRARY = [
   {
     group: "Intel NPU - OpenVINO Test",
@@ -96,7 +143,22 @@ const COREML_MODEL_LIBRARY = [
   },
 ];
 
-function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRunning, constraints, setConstraints, telemetry, backendOptions, showAlert = async ({ message }) => window.alert(message), showConfirm = async ({ message }) => window.confirm(message), activeTab }) {
+function ModelManager({ 
+  activeModel, 
+  setActiveModel, 
+  serverRunning, 
+  setServerRunning, 
+  constraints, 
+  setConstraints, 
+  telemetry, 
+  backendOptions, 
+  showAlert = async ({ message }) => window.alert(message), 
+  showConfirm = async ({ message }) => window.confirm(message), 
+  activeTab,
+  specs,
+  textSettings,
+}) {
+  const [activeModelType, setActiveModelType] = useState("image"); // "image" or "text"
   const [localModels, setLocalModels] = useState([]);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [downloadingModelId, setDownloadingModelId] = useState(null);
@@ -113,8 +175,11 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
   const [pendingLoadModel, setPendingLoadModel] = useState(null);
   const [vramWarning, setVramWarning] = useState(null);
   const [backendInfo, setBackendInfo] = useState({ backendMode: "", backendBinary: "", backendDevice: "" });
+  const [activeLlmModel, setActiveLlmModel] = useState(null);
+  const [llmRunning, setLlmRunning] = useState(false);
 
   const cancelLoadRef = React.useRef(false);
+  
   const handleCancelLoad = async () => {
     cancelLoadRef.current = true;
     try {
@@ -133,44 +198,74 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     backendOptions?.unavailable?.some((opt) => opt.id === "apple-npu")
   );
   
-  let visibleModelLibrary = [...MODEL_LIBRARY];
-  if (openvinoSupported) {
-    visibleModelLibrary = [...visibleModelLibrary, ...OPENVINO_MODEL_LIBRARY];
-  }
-  if (appleNpuSupported) {
-    visibleModelLibrary = [...visibleModelLibrary, ...COREML_MODEL_LIBRARY];
+  let visibleModelLibrary = [];
+  if (activeModelType === "image") {
+    visibleModelLibrary = [...MODEL_LIBRARY];
+    if (openvinoSupported) {
+      visibleModelLibrary = [...visibleModelLibrary, ...OPENVINO_MODEL_LIBRARY];
+    }
+    if (appleNpuSupported) {
+      visibleModelLibrary = [...visibleModelLibrary, ...COREML_MODEL_LIBRARY];
+    }
+  } else {
+    visibleModelLibrary = [...TEXT_MODEL_LIBRARY];
   }
   
   const getLocalModelInfo = (modelId) => localModels.map(normalizeModel).find((model) => model.filename === modelId);
+
+  const fetchModels = useCallback(async () => {
+    setIsLoadingModels(true);
+    try {
+      if (activeModelType === "image") {
+        const list = await listLocalModels();
+        setLocalModels(list.map(normalizeModel).filter((model) => model.filename));
+      } else {
+        const list = await listLlmModels();
+        setLocalModels(list.map(normalizeModel).filter((model) => model.filename));
+      }
+    } catch (e) {
+      console.error(e);
+      setLocalModels([]);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, [activeModelType]);
 
   useEffect(() => {
     if (activeTab === "models") {
       fetchModels();
       checkActiveDownload();
     }
-  }, [activeTab]);
+  }, [activeTab, fetchModels]);
 
   useEffect(() => {
     fetchModels();
     checkActiveDownload();
-  }, []);
+  }, [activeModelType]);
 
   useEffect(() => {
-    if (!serverRunning && !loadingModelId) {
-      setBackendInfo({ backendMode: "", backendBinary: "", backendDevice: "" });
-      return;
-    }
-
     let cancelled = false;
     const updateBackendInfo = async () => {
       try {
-        const status = await getBackendStatus();
+        const [sdStatus, llmStatus] = await Promise.all([
+          getBackendStatus(),
+          getLlmStatus()
+        ]);
         if (cancelled) return;
+        
         setBackendInfo({
-          backendMode: status.settings?.backendMode || status.loading?.backendMode || "",
-          backendBinary: status.settings?.backendBinary || status.loading?.backendBinary || "",
-          backendDevice: status.settings?.backendDevice || status.loading?.device || "",
+          backendMode: sdStatus.settings?.backendMode || sdStatus.loading?.backendMode || "",
+          backendBinary: sdStatus.settings?.backendBinary || sdStatus.loading?.backendBinary || "",
+          backendDevice: sdStatus.settings?.backendDevice || sdStatus.loading?.device || "",
         });
+        
+        if (llmStatus.ready) {
+          setActiveLlmModel(llmStatus.settings?.model || null);
+          setLlmRunning(true);
+        } else {
+          setActiveLlmModel(null);
+          setLlmRunning(false);
+        }
       } catch (_) {}
     };
 
@@ -219,18 +314,6 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     }, 1000);
   };
 
-  const fetchModels = async () => {
-    setIsLoadingModels(true);
-    try {
-      const list = await listLocalModels();
-      setLocalModels(list.map(normalizeModel).filter((model) => model.filename));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoadingModels(false);
-    }
-  };
-
   const downloadByUrl = async (url, expectedFilename) => {
     if (downloadingModelId) return;
 
@@ -248,13 +331,18 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     const isLocalServerMode = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
     if (!isTauriDesktop && !isLocalServerMode) {
-      showAlert({ title: "Server Required", message: "Model download requires the local image generator server.", danger: true });
+      showAlert({ title: "Server Required", message: "Model download requires the local server.", danger: true });
       return;
     }
 
     try {
-      const res = await downloadModel(url);
-      if (res.ok) {
+      let res;
+      if (activeModelType === "image") {
+        res = await downloadModel(url);
+      } else {
+        res = await downloadLlmModel(url);
+      }
+      if (res && res.ok) {
         startProgressPolling(expectedFilename);
       } else {
         showAlert({ title: "Download Failed", message: res.error || "Unknown error", danger: true });
@@ -264,26 +352,16 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     }
   };
 
-  // Download custom model from URL
   const handleUrlDownloadSubmit = async (e) => {
     e.preventDefault();
     if (!downloadUrl.trim()) return;
 
-    let modelName = "model.gguf";
+    let modelName = "model.safetensors";
     try {
       const parsed = new URL(downloadUrl.trim());
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        throw new Error("URL protocol must be http or https");
-      }
-      modelName = parsed.pathname.split("/").pop() || "";
-      if (!modelName) throw new Error("Could not extract filename from URL");
-      
-      const lowerName = modelName.toLowerCase();
-      if (!lowerName.endsWith(".gguf") && !lowerName.endsWith(".safetensors") && !lowerName.endsWith(".ckpt")) {
-        throw new Error("URL must point to a .gguf, .safetensors, or .ckpt weights file");
-      }
-    } catch (err) {
-      showAlert({ title: "Invalid URL", message: err.message, danger: true });
+      modelName = parsed.pathname.split("/").pop() || modelName;
+    } catch (_) {
+      showAlert({ title: "Invalid URL", message: "Please provide a valid HTTP/HTTPS link.", danger: true });
       return;
     }
 
@@ -292,65 +370,130 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
   };
 
   const handleLibraryDownload = async (model) => {
+    if (downloadingModelId) return;
+
     if (model.backendType === "openvino-npu") {
-      if (downloadingModelId) return;
+      const confirmed = await showConfirm({
+        title: "Download OpenVINO Model?",
+        message: `Download "${model.name}" (~${model.approxSize})? OpenVINO models are downloaded folder-by-folder via python script.`,
+        confirmLabel: "Download",
+      });
+      if (!confirmed) return;
       try {
-        const res = await downloadOpenVinoModel(model.id);
-        if (res.ok) {
-          startProgressPolling(model.filename);
-        } else {
-          showAlert({ title: "Download Failed", message: res.error || "Unknown error", danger: true });
-        }
+        await downloadOpenVinoModel(model.id);
+        startProgressPolling(model.name);
       } catch (err) {
-        showAlert({ title: "Download Error", message: err.message, danger: true });
+        showAlert({ title: "Download Failed", message: err.message, danger: true });
       }
       return;
     }
-    if (model.format === "CoreML") {
-      downloadByUrl(model.url, `${model.filename}.zip`);
-      return;
+
+    const confirmed = await showConfirm({
+      title: "Download Model?",
+      message: `Download "${model.name}" (~${model.approxSize})?`,
+      confirmLabel: "Download",
+    });
+    if (confirmed) {
+      await downloadByUrl(model.url, model.filename);
     }
-    downloadByUrl(model.url, model.filename);
   };
 
   const handleCancelDownload = async () => {
-    await cancelModelDownload();
-    setDownloadingModelId(null);
-    setDownloadProgress(0);
-    setDownloadSpeed("");
-    await fetchModels();
+    try {
+      await cancelModelDownload();
+      setDownloadingModelId(null);
+      setDownloadProgress(0);
+      setDownloadSpeed("");
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  // Check VRAM and trigger warning or load directly
   const checkVramAndLoad = async (modelId) => {
     const modelInfo = getLocalModelInfo(modelId);
-    if (modelInfo && telemetry && telemetry.vram_total_gb > 0) {
-      const isCpuMode = constraints.backendType === "cpu" || !constraints.useGpu;
-      const isOpenVino = modelInfo.backendType === "openvino-npu";
-      if (!isCpuMode && !isOpenVino) {
-        const freeVramGb = telemetry.vram_total_gb - telemetry.vram_used_gb;
-        const modelSizeGb = (modelInfo.sizeBytes || 0) / (1024 * 1024 * 1024);
-        if (modelSizeGb > freeVramGb) {
-          setVramWarning({
-            modelId,
-            modelSizeGb,
-            freeVramGb,
-            totalVramGb: telemetry.vram_total_gb,
-          });
-          return;
-        }
+    if (!modelInfo) {
+      await performLoadModel(modelId);
+      return;
+    }
+
+    const totalSizeBytes = Number(modelInfo.sizeBytes) || 0;
+    if (totalSizeBytes <= 0) {
+      await performLoadModel(modelId);
+      return;
+    }
+
+    const freeVramGb = Number(telemetry.vram_total_gb - telemetry.vram_used_gb) || 0;
+    const modelSizeGb = totalSizeBytes / (1024 ** 3);
+    const hasNvidiaGpu = Boolean(telemetry.gpu_name && telemetry.gpu_name.toLowerCase().includes("nvidia"));
+    
+    const isCpuOnlyBackend = constraints.backendType === "cpu" || constraints.useGpu === false;
+
+    if (hasNvidiaGpu && !isCpuOnlyBackend && modelInfo.backendType !== "openvino-npu" && modelInfo.format !== "CoreML") {
+      const safetyMarginGb = 0.8;
+      if (modelSizeGb + safetyMarginGb > freeVramGb) {
+        setVramWarning({
+          modelId,
+          modelSizeGb,
+          freeVramGb,
+          totalVramGb: telemetry.vram_total_gb,
+        });
+        return;
       }
     }
     await performLoadModel(modelId);
   };
 
-  // Start the model server backend
   const handleLoadModel = async (modelId) => {
-    if (activeModel && activeModel !== modelId && serverRunning) {
-      setPendingLoadModel(modelId);
-      return;
+    if (activeModelType === "image") {
+      if (activeModel && activeModel !== modelId && serverRunning) {
+        setPendingLoadModel(modelId);
+        return;
+      }
+      await checkVramAndLoad(modelId);
+    } else {
+      setLoadingModelId(modelId);
+      setModelLoadProgress({
+        progress: 10,
+        phase: "Stopping image engine if running...",
+        speed: "",
+        current: 0,
+        total: 0,
+        model: modelId,
+        backendMode: "",
+        backendBinary: "",
+        device: "",
+      });
+      try {
+        await stopServer();
+        setModelLoadProgress({
+          progress: 40,
+          phase: "Starting llama.cpp server...",
+          speed: "",
+          current: 0,
+          total: 0,
+          model: modelId,
+          backendMode: "",
+          backendBinary: "",
+          device: "",
+        });
+        const cores = textSettings?.threads || specs?.cpu_cores_physical || 4;
+        const context = textSettings?.contextSize || 4096;
+        const res = await startLlm(modelId, {
+          threads: cores,
+          contextSize: context,
+          gpuLayers: -1
+        });
+        setActiveLlmModel(modelId);
+        setLlmRunning(true);
+        setActiveModel(null);
+        setServerRunning(false);
+      } catch (err) {
+        showAlert({ title: "Model Load Failed", message: err.message || String(err), danger: true });
+      } finally {
+        setModelLoadProgress(null);
+        setLoadingModelId(null);
+      }
     }
-    await checkVramAndLoad(modelId);
   };
 
   const performLoadModel = async (modelId, forcedConstraints = null) => {
@@ -395,6 +538,11 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
       device: "",
     });
     try {
+      // Unload active text engine
+      await stopLlm();
+      setActiveLlmModel(null);
+      setLlmRunning(false);
+
       const modelInfo = getLocalModelInfo(modelId);
       const isCoreMLModel = modelInfo?.format === "CoreML" || modelInfo?.backendType === "apple-npu";
       const activeConstraints = forcedConstraints || constraints;
@@ -419,6 +567,7 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
             cfgScale: activeConstraints.cfgScale || 1,
           }
         : activeConstraints;
+      
       const response = await startServer(modelId, loadConstraints);
       console.log(response);
       
@@ -495,48 +644,61 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     }
   };
 
-  // Kill/Unload model server
   const handleUnloadModel = async () => {
-    if (isUnloading) return;
-    setIsUnloading(true);
-    setUnloadProgress({ progress: 10, phase: "Stopping backend process..." });
+    if (activeModelType === "image") {
+      if (isUnloading) return;
+      setIsUnloading(true);
+      setUnloadProgress({ progress: 10, phase: "Stopping backend process..." });
 
-    const poll = setInterval(async () => {
+      const poll = setInterval(async () => {
+        try {
+          const status = await getBackendStatus();
+          if (status.unloading?.active) {
+            setUnloadProgress({
+              progress: status.unloading.progress || 50,
+              phase: status.unloading.phase || "Unloading model...",
+            });
+          } else {
+            setUnloadProgress((prev) => ({
+              progress: Math.min(95, prev.progress + 10),
+              phase: prev.phase || "Unloading model...",
+            }));
+          }
+        } catch (_) {}
+      }, 300);
+
       try {
-        const status = await getBackendStatus();
-        if (status.unloading?.active) {
-          setUnloadProgress({
-            progress: status.unloading.progress || 50,
-            phase: status.unloading.phase || "Unloading model...",
-          });
-        } else {
-          setUnloadProgress((prev) => ({
-            progress: Math.min(95, prev.progress + 10),
-            phase: prev.phase || "Unloading model...",
-          }));
-        }
-      } catch (_) {}
-    }, 300);
-
-    try {
-      await stopServer();
-      setUnloadProgress({ progress: 100, phase: "Model unloaded" });
-      setActiveModel(null);
-      setPendingLoadModel(null);
-      setServerRunning(false);
-    } catch (e) {
-      console.error(e);
-      showAlert({ title: "Unload Failed", message: e.message || String(e), danger: true });
-    } finally {
-      clearInterval(poll);
-      setTimeout(() => {
+        await stopServer();
+        setUnloadProgress({ progress: 100, phase: "Model unloaded" });
+        setActiveModel(null);
+        setPendingLoadModel(null);
+        setServerRunning(false);
+      } catch (e) {
+        console.error(e);
+        showAlert({ title: "Unload Failed", message: e.message || String(e), danger: true });
+      } finally {
+        clearInterval(poll);
+        setTimeout(() => {
+          setIsUnloading(false);
+          setUnloadProgress({ progress: 0, phase: "" });
+        }, 500);
+      }
+    } else {
+      setIsUnloading(true);
+      setUnloadProgress({ progress: 50, phase: "Stopping llama.cpp backend process..." });
+      try {
+        await stopLlm();
+        setActiveLlmModel(null);
+        setLlmRunning(false);
+      } catch (e) {
+        showAlert({ title: "Unload Failed", message: e.message || String(e), danger: true });
+      } finally {
         setIsUnloading(false);
         setUnloadProgress({ progress: 0, phase: "" });
-      }, 500);
+      }
     }
   };
 
-  // Delete/Remove model file
   const handleDeleteModel = async (filename) => {
     if (await showConfirm({
       title: "Delete Model?",
@@ -545,13 +707,18 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
       danger: true,
     })) {
       try {
-        await deleteModel(filename);
-        // Refresh local models list
-        await fetchModels();
-        // If it was the active model, unload the server
-        if (activeModel === filename) {
-          await handleUnloadModel();
+        if (activeModelType === "image") {
+          await deleteModel(filename);
+          if (activeModel === filename) {
+            await handleUnloadModel();
+          }
+        } else {
+          await deleteLlmModel(filename);
+          if (activeLlmModel === filename) {
+            await handleUnloadModel();
+          }
         }
+        await fetchModels();
       } catch (err) {
         console.error("Failed to delete model:", err);
         showAlert({ title: "Delete Failed", message: err.message || String(err), danger: true });
@@ -571,17 +738,28 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     });
 
     try {
-      await importModelFile(sourcePath, (progressData) => {
-        setImportProgress(Math.round(progressData.progress));
-        setImportInfo({
-          filename: progressData.filename,
-          speed: progressData.speed_mb_s.toFixed(1),
-          eta: Math.round(progressData.eta_secs),
-          status: progressData.status
-        });
-      }, controller.signal);
+      if (activeModelType === "image") {
+        await importModelFile(sourcePath, (progressData) => {
+          setImportProgress(Math.round(progressData.progress));
+          setImportInfo({
+            filename: progressData.filename,
+            speed: progressData.speed_mb_s.toFixed(1),
+            eta: Math.round(progressData.eta_secs),
+            status: progressData.status
+          });
+        }, controller.signal);
+      } else {
+        await importLlmModel(sourcePath, (progressData) => {
+          setImportProgress(Math.round(progressData.progress));
+          setImportInfo({
+            filename: progressData.filename,
+            speed: progressData.speed_mb_s.toFixed(1),
+            eta: Math.round(progressData.eta_secs),
+            status: progressData.status
+          });
+        }, controller.signal);
+      }
 
-      // Refresh list
       await fetchModels();
     } catch (err) {
       console.error("Import failed:", err);
@@ -591,12 +769,6 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
     } finally {
       setImportProgress(null);
       setImportAbortController(null);
-    }
-  };
-
-  const handleCancelImport = () => {
-    if (importAbortController) {
-      importAbortController.abort();
     }
   };
 
@@ -619,8 +791,26 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
         </p>
       </div>
 
+      {/* Tab Selector for Image vs Text */}
+      <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "16px", marginBottom: "20px" }}>
+        <button
+          className={`m3-btn ${activeModelType === "image" ? "m3-btn-filled" : "m3-btn-outlined"}`}
+          onClick={() => setActiveModelType("image")}
+          style={{ height: "40px", padding: "0 20px" }}
+        >
+          Image Models (SD)
+        </button>
+        <button
+          className={`m3-btn ${activeModelType === "text" ? "m3-btn-filled" : "m3-btn-outlined"}`}
+          onClick={() => setActiveModelType("text")}
+          style={{ height: "40px", padding: "0 20px" }}
+        >
+          Text Models (GGUF)
+        </button>
+      </div>
+
       {/* Active Model Status Tonal Box */}
-      {activeModel && (
+      {activeModelType === "image" && activeModel && (
         <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
@@ -649,64 +839,34 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
                 </div>
               )}
             </div>
-            <button className="m3-btn m3-btn-error" onClick={handleUnloadModel} disabled={isUnloading || loadingModelId !== null}>
-              {isUnloading ? <RefreshCw className="progress-spinner" size={16} /> : <Trash2 size={16} />}
-              <span>{isUnloading ? "Unloading" : "Unload Server"}</span>
-            </button>
           </div>
         </div>
       )}
 
-      {isUnloading && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-error)", marginTop: "16px" }}>
-          <h4 style={{ fontWeight: 700, marginBottom: "8px" }}>Unloading Model</h4>
-          <div className="model-progress-section" style={{ margin: "8px 0 0 0" }}>
-            <div className="model-progress-label">
-              <span>{unloadProgress.phase || "Unloading model..."}</span>
-              <span>{Math.round(unloadProgress.progress)}%</span>
-            </div>
-            <div className="model-progress-bar">
-              <div className="model-progress-fill" style={{ width: `${Math.min(100, Math.max(0, unloadProgress.progress))}%`, transition: "width 0.25s ease" }}></div>
+      {activeModelType === "text" && activeLlmModel && (
+        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", background: "var(--md-sys-color-primary-container)", color: "var(--md-sys-color-on-primary-container)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <h4 style={{ fontWeight: 700 }}>Active Text Model: {activeLlmModel}</h4>
+              <p style={{ fontSize: "0.85rem", marginTop: "2px", opacity: 0.9 }}>
+                The local C++ llama.cpp server is running. Chat requests can be sent via the Text Chat interface.
+              </p>
             </div>
           </div>
         </div>
       )}
 
+      {/* Loading Progress Bar */}
       {modelLoadProgress && (
-        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-secondary)", marginTop: "16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", marginBottom: "12px" }}>
-            <h4 style={{ fontWeight: 700, margin: 0 }}>
-              Loading Model: {modelLoadProgress.model || loadingModelId}
-            </h4>
-            <button
-              className="m3-btn m3-btn-error"
-              style={{ height: "30px", padding: "0 12px", fontSize: "0.78rem", borderRadius: "8px" }}
-              onClick={handleCancelLoad}
-            >
-              Cancel Loading
+        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-primary)", marginTop: "24px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h4 style={{ fontWeight: 600 }}>Loading Weights: {modelLoadProgress.model}</h4>
+            <button className="m3-btn m3-btn-error" style={{ height: "34px", padding: "0 14px" }} onClick={handleCancelLoad}>
+              <Square size={14} />
+              <span>Cancel Load</span>
             </button>
           </div>
-          {(modelLoadProgress.backendMode || modelLoadProgress.backendBinary || modelLoadProgress.device) && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "10px" }}>
-              {modelLoadProgress.backendMode && (
-                <span className="status-chip" style={{ cursor: "default" }}>
-                  <HardDrive size={14} />
-                  <span>Loading on {modelLoadProgress.backendMode}</span>
-                </span>
-              )}
-              {modelLoadProgress.device && (
-                <span className="status-chip" style={{ cursor: "default" }}>
-                  <span>{modelLoadProgress.device}</span>
-                </span>
-              )}
-              {modelLoadProgress.backendBinary && (
-                <span className="status-chip" style={{ cursor: "default" }}>
-                  <span>{modelLoadProgress.backendBinary}</span>
-                </span>
-              )}
-            </div>
-          )}
-          <div className="model-progress-section" style={{ margin: "8px 0 0 0" }}>
+          <div className="model-progress-section" style={{ margin: "12px 0 6px 0" }}>
             <div className="model-progress-label">
               <span>
                 {modelLoadProgress.phase}
@@ -714,17 +874,30 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
               </span>
               <span>
                 {modelLoadProgress.total > 0
-                  ? modelLoadProgress.total <= 10
-                    ? `Loading components: ${modelLoadProgress.current} / ${modelLoadProgress.total} (${Math.round(modelLoadProgress.progress)}%)`
-                    : `Loaded ${modelLoadProgress.current} / ${modelLoadProgress.total} tensors`
+                  ? `Loaded ${modelLoadProgress.current} / ${modelLoadProgress.total} tensors`
                   : `${Math.round(modelLoadProgress.progress)}%`}
               </span>
             </div>
             <div className="model-progress-bar">
-              <div
-                className="model-progress-fill"
-                style={{ width: `${Math.min(100, Math.max(0, modelLoadProgress.progress))}%`, transition: "width 0.25s ease" }}
-              ></div>
+              <div className="model-progress-fill" style={{ width: `${Math.min(100, Math.max(0, modelLoadProgress.progress))}%`, transition: "width 0.2s ease" }}></div>
+            </div>
+            {(modelLoadProgress.backendMode || modelLoadProgress.device) && (
+              <div style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginTop: "6px" }}>
+                Initializing {modelLoadProgress.backendMode || "backend"}
+                {modelLoadProgress.device ? ` • ${modelLoadProgress.device}` : ""}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Unloading Progress Bar */}
+      {isUnloading && activeModelType === "image" && (
+        <div className="m3-card" style={{ borderLeft: "4px solid var(--md-sys-color-error)", marginTop: "24px" }}>
+          <h4 style={{ fontWeight: 600 }}>{unloadProgress.phase || "Unloading active model..."}</h4>
+          <div className="model-progress-section" style={{ margin: "12px 0 0 0" }}>
+            <div className="model-progress-bar">
+              <div className="model-progress-fill" style={{ width: `${unloadProgress.progress}%`, background: "var(--md-sys-color-error)", transition: "width 0.15s ease" }}></div>
             </div>
           </div>
         </div>
@@ -734,7 +907,7 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
       <div className="m3-card" style={{ marginTop: "24px" }}>
         <h3 className="m3-card-title">
           <Database size={18} style={{ color: "var(--md-sys-color-primary)" }} />
-          Local Models ({localModels.length})
+          Local {activeModelType === "image" ? "Image" : "Text"} Models ({localModels.length})
         </h3>
         
         {isLoadingModels ? (
@@ -744,13 +917,15 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
           </div>
         ) : localModels.length === 0 ? (
           <p style={{ fontSize: "0.9rem", color: "var(--md-sys-color-outline)", textAlign: "center", padding: "16px 0" }}>
-            No models detected in app/models/. Download from the library below or import a file.
+            {activeModelType === "image" 
+              ? "No image models detected in app/models/. Download from the library below or import a file."
+              : "No text models detected in app/llm-models/. Download from the library below or import a file."}
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             {localModels.map((model) => {
               const filename = model.filename;
-              const isActive = activeModel === filename;
+              const isActive = activeModelType === "image" ? activeModel === filename : activeLlmModel === filename;
               
               return (
                 <div 
@@ -769,7 +944,10 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
                   <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
                     <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{filename}</span>
                     <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>
-                      {model.backendType === "openvino-npu" ? "OpenVINO NPU Model" : model.format || "Local Weights File"} • {model.size || formatBytes(model.sizeBytes)}
+                      {activeModelType === "image"
+                        ? (model.backendType === "openvino-npu" ? "OpenVINO NPU Model" : model.format || "Local Weights File")
+                        : "llama.cpp GGUF Model"
+                      } • {model.size || formatBytes(model.sizeBytes)}
                     </span>
                   </div>
                   
@@ -813,7 +991,6 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
         )}
       </div>
 
-
       <div className="workspace-title-section" style={{ marginTop: "32px", marginBottom: "16px" }}>
         <h3 className="m3-card-title">
           <Library size={20} style={{ color: "var(--md-sys-color-primary)" }} />
@@ -834,7 +1011,7 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
                     <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                       <span style={{ fontWeight: 700 }}>{model.name}</span>
                       <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)" }}>
-                        {model.format} • approx. {model.approxSize} • {model.resolution}
+                        {model.format} • approx. {model.approxSize} {model.resolution !== "N/A" && `• ${model.resolution}`}
                       </span>
                     </div>
                     <p style={{ fontSize: "0.78rem", color: "var(--md-sys-color-on-surface-variant)", lineHeight: 1.35, margin: 0 }}>
@@ -891,7 +1068,6 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
         ))}
       </div>
 
-
       {/* Local Drag and Drop Importer */}
       <div className="workspace-title-section" style={{ marginTop: "32px", marginBottom: "16px" }}>
         <h3 className="m3-card-title">
@@ -926,14 +1102,14 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
           <input
             type="file"
             style={{ display: "none" }}
-            accept=".gguf,.safetensors,.ckpt"
+            accept={activeModelType === "image" ? ".safetensors,.ckpt" : ".gguf"}
             onChange={handleImportFile}
             disabled={importProgress !== null}
           />
           <FolderOpen className="import-icon" />
           <span style={{ fontWeight: 600 }}>Choose weights file</span>
           <span style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", textAlign: "center" }}>
-            Select `.gguf`, `.safetensors` or `.ckpt` weights.
+            Select {activeModelType === "image" ? "`.safetensors` or `.ckpt` weights." : "`.gguf` weights."}
           </span>
         </label>
 
@@ -943,7 +1119,7 @@ function ModelManager({ activeModel, setActiveModel, serverRunning, setServerRun
             Download Model from URL
           </h4>
           <p style={{ fontSize: "0.75rem", color: "var(--md-sys-color-outline)", marginBottom: "12px" }}>
-            Download any GGUF or Safetensors model from Hugging Face or other sites directly to your models folder.
+            Download any {activeModelType === "image" ? "Safetensors" : "GGUF"} model from Hugging Face directly to your models folder.
           </p>
           {isUrlDownloading ? (
             <div className="model-progress-section" style={{ marginTop: "0px" }}>
