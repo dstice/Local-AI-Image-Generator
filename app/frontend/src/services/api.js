@@ -412,6 +412,8 @@ export async function chatWithLlm(messages, options = {}) {
       presence_penalty: options.presencePenalty,
       seed: options.seed,
       stop: options.stop,
+      useWeb: options.useWeb === true,
+      timeFilter: options.timeFilter || "any",
     }),
   });
   const data = await readJsonResponse(res, "The local text model returned an invalid response.");
@@ -441,6 +443,8 @@ export async function streamChatWithLlm(messages, options = {}, onToken = () => 
       presence_penalty: options.presencePenalty,
       seed: options.seed,
       stop: options.stop,
+      useWeb: options.useWeb === true,
+      timeFilter: options.timeFilter || "any",
     }),
   };
   if (options.signal) {
@@ -462,6 +466,7 @@ export async function streamChatWithLlm(messages, options = {}, onToken = () => 
   let usage = null;
   let timings = null;
   let finishReason = null;
+  let webSources = [];
 
   const normalizeTextDelta = (value) => {
     if (typeof value === "string") return value;
@@ -490,7 +495,16 @@ export async function streamChatWithLlm(messages, options = {}, onToken = () => 
         .trim();
       if (!data || data === "[DONE]") return data === "[DONE]";
 
+      const eventName = eventText
+        .split(/\r?\n/)
+        .find((line) => line.startsWith("event:"))
+        ?.slice(6)
+        .trim();
       const parsed = JSON.parse(data);
+      if (eventName === "web_sources") {
+        webSources = parsed.sources || [];
+        return false;
+      }
       const choice = parsed.choices?.[0];
       const token = normalizeTextDelta(
         choice?.delta?.content ??
@@ -540,7 +554,21 @@ export async function streamChatWithLlm(messages, options = {}, onToken = () => 
 
   if (!finished && buffer.trim()) consumeEvent(buffer);
   if (!content && !reasoningContent) throw new Error("The text model returned an empty streamed response.");
-  return { content, reasoningContent, usage, timings, finishReason };
+  return { content, reasoningContent, usage, timings, finishReason, webSources };
+}
+
+export async function searchWeb(query, options = {}) {
+  const res = await fetch("/api/web-search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      timeFilter: options.timeFilter || "any",
+      resultLimit: options.resultLimit,
+      fetchLimit: options.fetchLimit,
+    }),
+  });
+  return await readJsonResponse(res, "The local server returned an invalid web search response.");
 }
 
 export async function downloadLlmModel(url, filename = null, companion = null) {

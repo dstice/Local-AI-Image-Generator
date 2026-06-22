@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Bot, LoaderCircle, Send, Trash2, Square, History, Paperclip, X, ChevronDown } from "lucide-react";
+import { Bot, LoaderCircle, Send, Trash2, Square, History, Paperclip, X, ChevronDown, Globe2 } from "lucide-react";
 import {
   getDownloadProgress,
   getLlmStatus,
@@ -149,6 +149,8 @@ function TextChat({
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [useWebSearch, setUseWebSearch] = useState(false);
+  const [webTimeFilter, setWebTimeFilter] = useState("any");
   const [loadingModel, setLoadingModel] = useState(null);
   const [tokenUsage, setTokenUsage] = useState({
     prompt_tokens: 0,
@@ -639,7 +641,7 @@ function TextChat({
     setMessages([...nextMessages, {
       role: "assistant",
       content: "",
-      generationStats: { status: "starting", tokens: 0, tokensPerSecond: 0, seconds: 0, vision: requestHasImage },
+      generationStats: { status: "starting", tokens: 0, tokensPerSecond: 0, seconds: 0, vision: requestHasImage, web: useWebSearch },
     }]);
 
     const controller = new AbortController();
@@ -691,6 +693,8 @@ function TextChat({
         repeatPenalty: textSettings?.repeatPenalty,
         seed: textSettings?.seed,
         enableThinking: thinkingEnabled,
+        useWeb: useWebSearch,
+        timeFilter: webTimeFilter,
         signal: controller.signal,
       }, (_token, fullText, _reasoningToken, fullReasoning) => {
         const now = performance.now();
@@ -790,6 +794,7 @@ function TextChat({
         reasoning: processed.reasoning,
         thinkingDuration: finalThinkingDuration,
         generationStats,
+        webSources: response.webSources || [],
       }];
       setMessages(finalMessages);
       saveConversationState(convId, finalMessages, selectedModel);
@@ -1073,6 +1078,34 @@ function TextChat({
                           )}
                         </div>
                       )}
+                      {message.role === "assistant" && Array.isArray(message.webSources) && message.webSources.length > 0 && (
+                        <div style={{
+                          marginTop: "8px",
+                          padding: "10px 12px",
+                          border: "1px solid var(--border-color)",
+                          borderRadius: "8px",
+                          background: "var(--md-sys-color-surface-container)",
+                          fontSize: "0.8rem",
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, marginBottom: "6px" }}>
+                            <Globe2 size={13} />
+                            <span>Sources</span>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                            {message.webSources.map((source, sourceIndex) => (
+                              <a
+                                key={`${source.url}-${sourceIndex}`}
+                                href={source.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: "var(--md-sys-color-primary)", textDecoration: "none", overflowWrap: "anywhere" }}
+                              >
+                                [{source.index || sourceIndex + 1}] {source.title || source.url}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Generation stats pill */}
                       {message.role === "assistant" && message.generationStats && !message.error && (
@@ -1084,7 +1117,7 @@ function TextChat({
                           )}
                           <div className={`chat-generation-stats ${message.generationStats.status}`}>
                           {message.generationStats.status === "starting" ? (
-                            <><LoaderCircle size={11} className="progress-spinner" /> {message.generationStats.vision ? "Processing image..." : "Waiting for first token..."}</>
+                            <><LoaderCircle size={11} className="progress-spinner" /> {message.generationStats.web ? "Searching web..." : message.generationStats.vision ? "Processing image..." : "Waiting for first token..."}</>
                           ) : message.generationStats.status === "streaming" ? (
                             <><span style={{ opacity: 0.7 }}>⚡</span> {message.generationStats.tokensPerSecond.toFixed(1)} tok/s</>
                           ) : (
@@ -1150,6 +1183,32 @@ function TextChat({
             >
               <Paperclip size={17} />
             </button>
+            <button
+              className={`chat-composer-deepthink-btn ${useWebSearch ? "active" : ""}`}
+              onClick={() => setUseWebSearch((value) => !value)}
+              disabled={!status.ready || isBusy}
+              title={useWebSearch ? "Disable web search" : "Enable web search"}
+              style={{ marginBottom: "2px" }}
+            >
+              <Globe2 size={14} />
+              <span>Web</span>
+            </button>
+            {useWebSearch && (
+              <select
+                className="m3-input"
+                value={webTimeFilter}
+                onChange={(event) => setWebTimeFilter(event.target.value)}
+                disabled={isBusy}
+                title="Search recency"
+                style={{ width: "116px", height: "38px", marginBottom: "2px", fontSize: "0.78rem" }}
+              >
+                <option value="any">Any time</option>
+                <option value="day">Past day</option>
+                <option value="week">Past week</option>
+                <option value="month">Past month</option>
+                <option value="year">Past year</option>
+              </select>
+            )}
 
             <div className="chat-composer-middle" style={{ flex: 1, display: "flex", minWidth: 0 }}>
               <textarea

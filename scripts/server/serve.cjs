@@ -10,6 +10,7 @@ const net      = require("net");
 const os       = require("os");
 const path     = require("path");
 const { spawn, spawnSync, execSync, exec, execFile } = require("child_process");
+const { comprehensiveWebSearch } = require("../search/core");
 
 // HTTP keep-alive agent for llama-server (eliminates TCP handshake per request)
 const llmHttpAgent = new http.Agent({
@@ -128,6 +129,10 @@ if (!fs.existsSync(TTS_OUTPUTS)) {
 const TTS_CACHE = path.join(ROOT, "app", "tts-cache");
 if (!fs.existsSync(TTS_CACHE)) {
   fs.mkdirSync(TTS_CACHE, { recursive: true });
+}
+const WEB_SEARCH_CACHE = path.join(ROOT, "app", "cache", "search");
+if (!fs.existsSync(WEB_SEARCH_CACHE)) {
+  fs.mkdirSync(WEB_SEARCH_CACHE, { recursive: true });
 }
 const TTS_RUNTIME = path.join(ROOT, "app", "tts-runtime");
 const TTS_WORKER = path.join(ROOT, "scripts", "workers", "tts-kokoro-worker.mjs");
@@ -5404,12 +5409,72 @@ async function retryLowerContext() {
   await runExclusiveLlmOperation(() => startLlm(newSettings));
 }
 
+function getMessageText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((item) => {
+      if (typeof item === "string") return item;
+      if (typeof item?.text === "string") return item.text;
+      if (typeof item?.content === "string") return item.content;
+      return "";
+    }).join("\n");
+  }
+  if (content && typeof content === "object") {
+    if (typeof content.text === "string") return content.text;
+    if (typeof content.content === "string") return content.content;
+  }
+  return "";
+}
+
+function getLastUserQuery(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === "user") {
+      return getMessageText(messages[i].content).trim();
+    }
+  }
+  return "";
+}
+
+async function augmentMessagesWithWebSearch(messages, body) {
+  if (body.useWeb !== true && body.use_web !== true) {
+    return { messages, webSources: [], webContext: "" };
+  }
+  const query = String(body.webQuery || body.query || getLastUserQuery(messages) || "").trim();
+  if (!query) return { messages, webSources: [], webContext: "" };
+
+  const result = await comprehensiveWebSearch(query, {
+    timeFilter: body.timeFilter || body.time_filter || "any",
+    resultLimit: body.webResultLimit || 5,
+    fetchLimit: body.webFetchLimit || 3,
+    cacheDir: WEB_SEARCH_CACHE,
+  });
+  if (!result.context || !result.sources.length) {
+    return { messages, webSources: [], webContext: "" };
+  }
+  let insertAt = 0;
+  while (insertAt < messages.length && messages[insertAt]?.role === "system") {
+    insertAt += 1;
+  }
+  const augmentedMessages = [
+    ...messages.slice(0, insertAt),
+    { role: "user", content: result.context },
+    ...messages.slice(insertAt),
+  ];
+  return {
+    messages: augmentedMessages,
+    webSources: result.sources,
+    webContext: result.context,
+  };
+}
+
 async function doLlmChat(req, res, body, retryCount = 0) {
   try {
     const isStream = body.stream === true;
+    const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+    const webAugmentation = await augmentMessagesWithWebSearch(rawMessages, body);
     const requestData = JSON.stringify({
       model: llmSettings.model || "local-model",
-      messages: Array.isArray(body.messages) ? body.messages : [],
+      messages: webAugmentation.messages,
       temperature: Number.isFinite(Number(body.temperature)) ? Number(body.temperature) : 0.7,
       max_tokens: Math.max(1, Math.min(4096, Number(body.max_tokens) || Number(body.maxTokens) || 1024)),
       stream: isStream,
@@ -5468,6 +5533,9 @@ async function doLlmChat(req, res, body, retryCount = 0) {
         const socket = res.socket || res.connection;
         socket?.setNoDelay?.(true);
         res.flushHeaders?.();
+        if (webAugmentation.webSources.length) {
+          res.write(`event: web_sources\ndata: ${JSON.stringify({ sources: webAugmentation.webSources })}\n\n`);
+        }
         clientRes.on("data", (chunk) => res.write(chunk));
         clientRes.on("end", () => res.end());
         clientRes.on("error", (err) => res.destroy(err));
@@ -5500,6 +5568,9 @@ async function doLlmChat(req, res, body, retryCount = 0) {
     } else {
       try {
         const result = await requestJson(`http://127.0.0.1:${PORT_LLM}/v1/chat/completions`, JSON.parse(requestData), 300000);
+        if (webAugmentation.webSources.length) {
+          result.web_sources = webAugmentation.webSources;
+        }
         return json(res, 200, result);
       } catch (err) {
         if (isOomError(err.message) && retryCount === 0) {
@@ -5700,6 +5771,32 @@ async function getLlmfitRecommendations(useCase = "chat", limit = 10) {
     return null;
   }
 }
+
+  if (req.url === "/api/web-search/config" && req.method === "GET") {
+    return json(res, 200, {
+      ok: true,
+      provider: "duckduckgo",
+      providers: [{ key: "duckduckgo", name: "DuckDuckGo", requiresApiKey: false, active: true }],
+      cachePath: WEB_SEARCH_CACHE,
+      defaults: { resultLimit: 5, fetchLimit: 3, timeFilter: "any" },
+    });
+  }
+
+  if (req.url === "/api/web-search" && req.method === "POST") {
+    const body = await readJsonBody(req, res);
+    if (!body) return;
+    try {
+      const result = await comprehensiveWebSearch(body.query || body.q || "", {
+        timeFilter: body.timeFilter || body.time_filter || "any",
+        resultLimit: body.resultLimit || 5,
+        fetchLimit: body.fetchLimit || 3,
+        cacheDir: WEB_SEARCH_CACHE,
+      });
+      return json(res, 200, { ok: true, ...result });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: err.message || String(err) });
+    }
+  }
 
   if (req.url === "/api/llm/chat" && req.method === "POST") {
     const body = await readJsonBody(req, res);
