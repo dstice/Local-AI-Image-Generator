@@ -683,46 +683,12 @@ function Generator({
             <div className="m3-field-group">
               {/* Prompt Textarea */}
               <div className="m3-text-field">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <label className="m3-text-field-label">Positive Prompt</label>
-                  <button
-                    type="button"
-                    className="m3-btn m3-btn-tonal"
-                    style={{ height: "28px", padding: "0 10px", fontSize: "0.75rem", borderRadius: "14px", display: "flex", alignItems: "center", gap: "4px" }}
-                    onClick={handleEnhancePrompt}
-                    disabled={isGenerating || isEnhancing || !prompt.trim()}
-                  >
-                    {isEnhancing ? (
-                      <>
-                        <span className="progress-spinner" style={{ width: "12px", height: "12px", borderWidth: "2px" }} />
-                        <span>Enhancing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={12} />
-                        <span>Enhance Prompt</span>
-                      </>
-                    )}
-                  </button>
-                </div>
+                <label className="m3-text-field-label">Image Prompt</label>
                 <textarea
                   className="m3-textarea"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="Enter a descriptive prompt (e.g. 'A futuristic city in cyberpunk aesthetic, high details, cinematic lighting')..."
-                  disabled={isGenerating}
-                />
-              </div>
-
-              {/* Negative Prompt Text Input */}
-              <div className="m3-text-field">
-                <label className="m3-text-field-label">Negative Prompt (Optional)</label>
-                <input
-                  type="text"
-                  className="m3-input"
-                  value={negativePrompt}
-                  onChange={(e) => setNegativePrompt(e.target.value)}
-                  placeholder="Items to avoid (e.g. 'blurry, low quality, deformed hands, texts')..."
                   disabled={isGenerating}
                 />
               </div>
@@ -789,19 +755,19 @@ function Generator({
               <div className="m3-text-field">
                 <label className="m3-text-field-label">Active Image Constraints</label>
                 <div className="chips-container">
-                  <div className="status-chip" onClick={() => setActiveTab("constraints")}>
+                  <div className="status-chip">
                     <Sliders size={14} />
                     <span>Resolution: {constraints.width}x{constraints.height}</span>
                   </div>
-                  <div className="status-chip" onClick={() => setActiveTab("constraints")}>
+                  <div className="status-chip">
                     <RefreshCw size={14} />
                     <span>Steps: {constraints.steps}</span>
                   </div>
-                  <div className="status-chip" onClick={() => setActiveTab("constraints")}>
+                  <div className="status-chip">
                     <Sparkles size={14} />
                     <span>Sampler: {constraints.sampler}</span>
                   </div>
-                  <div className="status-chip" onClick={() => setActiveTab("constraints")}>
+                  <div className="status-chip">
                     <span>Seed: {constraints.seed === -1 ? "Random" : constraints.seed}</span>
                   </div>
                 </div>

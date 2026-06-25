@@ -423,10 +423,48 @@ function Settings({
   };
 
   const updateTextSetting = (key, value) => {
-    setPendingTextSettings((prev) => ({
-      ...prev,
-      [key]: value
-    }));
+    setPendingTextSettings((prev) => {
+      const updated = { ...prev, [key]: value };
+      
+      // If the user selected a preset performance profile, apply its hardware parameters
+      if (key === "performanceProfile") {
+        const presets = specs?.recommended_text_settings;
+        if (presets) {
+          let preset = null;
+          if (value === "potato") preset = presets.low;
+          else if (value === "balanced") preset = presets.mid;
+          else if (value === "high") preset = presets.high;
+          
+          if (preset) {
+            Object.assign(updated, {
+              contextSize: preset.contextSize,
+              threads: preset.threads,
+              gpuLayers: preset.gpuLayers,
+              cacheTypeK: preset.cacheTypeK,
+              cacheTypeV: preset.cacheTypeV,
+              flashAttn: preset.flashAttn,
+              mlock: preset.mlock,
+              mmap: preset.mmap,
+              cachePrompt: preset.cachePrompt,
+              batchSize: preset.batchSize,
+              ubatchSize: preset.ubatchSize,
+            });
+          }
+        }
+      } else {
+        // If the user manually overrides any performance-related setting, auto-switch profile to "custom"
+        const isPerformanceKey = [
+          "contextSize", "threads", "gpuLayers", "cacheTypeK", "cacheTypeV",
+          "flashAttn", "mlock", "mmap", "cachePrompt", "batchSize", "ubatchSize"
+        ].includes(key);
+        
+        if (isPerformanceKey) {
+          updated.performanceProfile = "custom";
+        }
+      }
+      
+      return updated;
+    });
   };
 
   const updateSpeechSetting = (key, value) => {
@@ -1093,6 +1131,8 @@ function Settings({
                 </div>
               </div>
 
+
+
               {llmBackends.available?.length > 1 && (
                 <div className="m3-slider-group">
                   <div className="m3-slider-header">
@@ -1186,57 +1226,59 @@ function Settings({
                   ))}
                 </div>
               </div>
+
+              {hasPendingChanges && (
+                <div className="settings-save-bar" style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "16px 20px",
+                  background: "color-mix(in srgb, var(--md-sys-color-primary) 10%, var(--bg-card))",
+                  border: "1px solid color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent)",
+                  borderRadius: "14px",
+                  marginTop: "20px",
+                  gap: "16px",
+                  flexWrap: "wrap",
+                  animation: "fadeIn 0.2s ease",
+                  width: "100%",
+                  boxSizing: "border-box"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <Brain size={18} style={{ color: "var(--md-sys-color-primary)" }} />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>Unsaved Text Generation Settings</div>
+                      <div style={{ fontSize: "0.85rem", opacity: 0.8, marginTop: "2px" }}>
+                        {llmStatus.ready
+                          ? "Saving will unload the active text model to apply changes."
+                          : "Changes will be applied on the next model load."}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    className="m3-btn m3-btn-filled"
+                    onClick={handleSaveTextSettings}
+                    style={{
+                      background: "var(--md-sys-color-primary)",
+                      color: "var(--md-sys-color-on-primary)",
+                      border: "none",
+                      borderRadius: "10px",
+                      padding: "10px 18px",
+                      fontWeight: 600,
+                      fontSize: "0.85rem",
+                      cursor: "pointer",
+                      boxShadow: "0 2px 8px color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent)",
+                    }}
+                  >
+                    Save & Apply Changes
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
 
         </div>
           </div>
-
-          {hasPendingChanges && (
-            <div className="settings-save-bar" style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "16px 20px",
-              background: "color-mix(in srgb, var(--md-sys-color-primary) 10%, var(--bg-card))",
-              border: "1px solid color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent)",
-              borderRadius: "14px",
-              marginTop: "20px",
-              gap: "16px",
-              flexWrap: "wrap",
-              animation: "fadeIn 0.2s ease",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <Brain size={18} style={{ color: "var(--md-sys-color-primary)" }} />
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>Unsaved Text Generation Settings</div>
-                  <div style={{ fontSize: "0.85rem", opacity: 0.8, marginTop: "2px" }}>
-                    {llmStatus.ready
-                      ? "Saving will unload the active text model to apply changes."
-                      : "Changes will be applied on the next model load."}
-                  </div>
-                </div>
-              </div>
-              <button
-                className="m3-btn m3-btn-filled"
-                onClick={handleSaveTextSettings}
-                style={{
-                  background: "var(--md-sys-color-primary)",
-                  color: "var(--md-sys-color-on-primary)",
-                  border: "none",
-                  borderRadius: "10px",
-                  padding: "10px 18px",
-                  fontWeight: 600,
-                  fontSize: "0.85rem",
-                  cursor: "pointer",
-                  boxShadow: "0 2px 8px color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent)",
-                }}
-              >
-                Save & Apply Changes
-              </button>
-            </div>
-          )}
         </div>
       )}
     </>
