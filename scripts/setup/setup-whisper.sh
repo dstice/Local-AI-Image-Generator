@@ -25,7 +25,11 @@ download_and_extract() {
   echo "   >>   Downloading $asset"
   curl -fSL --progress-bar "$url" -o "$archive.part"
   mv "$archive.part" "$archive"
-  tar -xzf "$archive" -C "$dest" --strip-components=1
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$SCRIPT_DIR/extract_tar.py" --archive "$archive" --dest "$dest" --strip-components=1
+  else
+    tar -xzf "$archive" -C "$dest" --strip-components=1
+  fi
   rm -f "$archive"
   chmod +x "$dest"/whisper-* "$dest"/main "$dest"/server 2>/dev/null || true
 
